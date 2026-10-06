@@ -214,6 +214,15 @@ top bit (the regression's arith-rand found that one) - so a 16-bit
 quotient or remainder by a variable divisor is `__divuint`/`__moduint`,
 which check (q = a for b == 1; r = a - q*b with q 0 or 1 for b >= 0x8000).
 
+The BF16 unit (2026-10-06): `<lisa/bf16.h>` + `device/lib/lisa/bf16.s`
+and `bf16c.c` expose it as `bf16_t` with explicit functions (the C
+`float` stays the 32-bit software one).  Probing it on the chip found
+the adder defective (the carry-out and the rounding-overflow cases;
+`lisa_isa.md` BF16 notes), so add/sub are software (round to nearest
+even), and `lisa_sim` got bit-exact ports of fadd/fmul/fdiv/fcmp/itof/
+ftoi from the RTL.  A `--bf16-float` library (option B) that puts the C
+float through the unit would build on these routines.
+
 Not done / next:
 * Code quality: more peepholes
   (`ldax x; stax x`, `ldi 0; stax a; ldi 0; stax b`, compare-then-branch

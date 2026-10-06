@@ -74,6 +74,12 @@ build/bin/sdcc -mlisa -o prog.ihx prog.c          # Intel HEX, byte addresses = 
   is the library's `__divuint` / `__moduint`, which check - see the
   silicon notes in `lisa_isa.md`.  16-bit shifts use `shl16` / `shr16`
   on the `{n(sp), A}` pair.
+* The bfloat16 unit: `#include <lisa/bf16.h>` gives `bf16_t` (the bit
+  pattern) with `bf16_mul`/`bf16_div`/`bf16_gt`/`bf16_eq`/`bf16_cmp`/
+  `bf16_from_uint`/`bf16_to_uint` on the hardware, `bf16_add`/`bf16_sub`
+  in software (the silicon's adder is defective, see the BF16 notes in
+  `lisa_isa.md`), and `bf16_from_float`/`bf16_to_float` to and from the
+  32-bit `float`.  The C type `float` itself stays the software one.
 * Registers: one-byte temporaries are kept in A where the register
   allocator (`src/lisa/ralloc2.cc`, SDCC's tree-decomposition allocator
   with a dry-run cost model) finds it cheaper; everything else lives on
@@ -168,6 +174,6 @@ The smaller, chip-sized suite is `../sdcc_test` (`make check`); its
 | compiler back end | `src/lisa/{main.c,gen.c,ralloc.c,ralloc2.cc,peeph.def}` (`ralloc2.cc`: A for one-byte temporaries, tree-decomposition allocator with dry-run costs) |
 | assembler | `sdas/aslisa/{lisa.h,lisaadr.c,lisamch.c,lisapst.c}`, data-in-code expansion in `sdas/asxxsrc/asout.c`, `.p` suffix in `asmain.c` |
 | linker | `sdas/linksrc/lkrloc3.c` (LISA relocation rules), `lkarea.c` (code/data spaces, CDATA alignment, `s_<area>` symbols) |
-| library | `device/lib/lisa/{Makefile.in,setjmp.s,atomic_flag_test_and_set.s,heap.s}`, `device/include/lisa/tt07.h` (peripherals, interrupts), `device/include/stdarg.h`, `setjmp.h`, `stdatomic.h` |
+| library | `device/lib/lisa/{Makefile.in,setjmp.s,atomic_flag_test_and_set.s,heap.s,divu.s,bf16.s,bf16c.c}`, `device/include/lisa/tt07.h` (peripherals, interrupts), `device/include/lisa/bf16.h` (the FPU), `device/include/stdarg.h`, `setjmp.h`, `stdatomic.h` |
 | regression port | `support/regression/ports/lisa/{spec.mk,support.c}`, `fwk/include/testfwk.h` (`__SDCC_lisa`), LISA addresses in `tests/bitfields-*.c.in`, `tests/absolute.c.in` |
 | generic hooks | `src/SDCCglue.c` (program startup jumps, sfr table, FDATA), `src/SDCCsymt.c` (8-bit div/mod helpers return int; `__at` objects stay in data), `src/SDCCmem.c` (big objects to FDATA), `src/SDCCval.c` (code-pointer offset scaling), `src/port.h`, `src/SDCCmain.c`, `configure.ac`, `Makefile.in`, `device/lib/Makefile.in`, `device/lib/malloc.c` (lazy heap init) |
