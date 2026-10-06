@@ -46,3 +46,242 @@ replace restart {
 	bz	%1
 	; peephole 4 if eq; br -> bz
 }
+
+// a branch to a label that only branches on: go there directly
+replace restart {
+	br	%5
+} by {
+	br	%6
+	; peephole 5 br threaded
+} if labelIsUncondJump(), labelRefCountChange(%5 -1), labelRefCountChange(%6 +1)
+
+replace restart {
+	br.p	%5
+} by {
+	br.p	%6
+	; peephole 6 br.p threaded
+} if labelIsUncondJump(), labelRefCountChange(%5 -1), labelRefCountChange(%6 +1)
+
+replace restart {
+	bz	%5
+} by {
+	bz	%6
+	; peephole 7 bz threaded
+} if labelIsUncondJump(), labelRefCountChange(%5 -1), labelRefCountChange(%6 +1)
+
+replace restart {
+	bnz	%5
+} by {
+	bnz	%6
+	; peephole 8 bnz threaded
+} if labelIsUncondJump(), labelRefCountChange(%5 -1), labelRefCountChange(%6 +1)
+
+// code after an unconditional branch up to a label nobody refers to
+replace restart {
+	br	%1
+%2:
+	br	%3
+} by {
+	br	%1
+	; peephole 9 removed unreachable br %3
+} if labelRefCount(%2 0), labelRefCountChange(%3 -1)
+
+replace restart {
+	br	%1
+%2:
+	jal	%3
+} by {
+	br	%1
+	; peephole 10 removed unreachable jal %3
+} if labelRefCount(%2 0)
+
+// a conditional branch around an unconditional one: invert it
+replace restart {
+	bz	%1
+	br	%2
+%1:
+} by {
+	bnz	%2
+	; peephole 11 bz over br -> bnz
+%1:
+} if labelRefCountChange(%1 -1)
+
+replace restart {
+	bnz	%1
+	br	%2
+%1:
+} by {
+	bz	%2
+	; peephole 12 bnz over br -> bz
+%1:
+} if labelRefCountChange(%1 -1)
+
+replace restart {
+	if	eq
+	br.p	%1
+	br	%2
+%1:
+} by {
+	bnz	%2
+	; peephole 13 if eq over br -> bnz
+%1:
+} if labelRefCountChange(%1 -1)
+
+replace restart {
+	if	ne
+	br.p	%1
+	br	%2
+%1:
+} by {
+	bz	%2
+	; peephole 14 if ne over br -> bz
+%1:
+} if labelRefCountChange(%1 -1)
+
+replace restart {
+	if	lt
+	br.p	%1
+	br	%2
+%1:
+} by {
+	if	ge
+	br.p	%2
+	; peephole 15 if lt over br -> if ge
+%1:
+} if labelRefCountChange(%1 -1)
+
+replace restart {
+	if	ge
+	br.p	%1
+	br	%2
+%1:
+} by {
+	if	lt
+	br.p	%2
+	; peephole 16 if ge over br -> if lt
+%1:
+} if labelRefCountChange(%1 -1)
+
+replace restart {
+	if	gt
+	br.p	%1
+	br	%2
+%1:
+} by {
+	if	le
+	br.p	%2
+	; peephole 17 if gt over br -> if le
+%1:
+} if labelRefCountChange(%1 -1)
+
+replace restart {
+	if	le
+	br.p	%1
+	br	%2
+%1:
+} by {
+	if	gt
+	br.p	%2
+	; peephole 18 if le over br -> if gt
+%1:
+} if labelRefCountChange(%1 -1)
+
+replace restart {
+	if	slt
+	br.p	%1
+	br	%2
+%1:
+} by {
+	if	sge
+	br.p	%2
+	; peephole 19 if slt over br -> if sge
+%1:
+} if labelRefCountChange(%1 -1)
+
+replace restart {
+	if	sge
+	br.p	%1
+	br	%2
+%1:
+} by {
+	if	slt
+	br.p	%2
+	; peephole 20 if sge over br -> if slt
+%1:
+} if labelRefCountChange(%1 -1)
+
+replace restart {
+	if	sgt
+	br.p	%1
+	br	%2
+%1:
+} by {
+	if	sle
+	br.p	%2
+	; peephole 21 if sgt over br -> if sle
+%1:
+} if labelRefCountChange(%1 -1)
+
+replace restart {
+	if	sle
+	br.p	%1
+	br	%2
+%1:
+} by {
+	if	sgt
+	br.p	%2
+	; peephole 22 if sle over br -> if sgt
+%1:
+} if labelRefCountChange(%1 -1)
+
+replace restart {
+	if	c
+	br.p	%1
+	br	%2
+%1:
+} by {
+	if	nc
+	br.p	%2
+	; peephole 23 if c over br -> if nc
+%1:
+} if labelRefCountChange(%1 -1)
+
+replace restart {
+	if	nc
+	br.p	%1
+	br	%2
+%1:
+} by {
+	if	c
+	br.p	%2
+	; peephole 24 if nc over br -> if c
+%1:
+} if labelRefCountChange(%1 -1)
+
+replace restart {
+	bnz	%1
+%3:
+	br	%2
+%1:
+} by {
+	bz	%2
+	; peephole 25 bnz over an unused label and br -> bz
+%1:
+} if labelRefCount(%3 0), labelRefCountChange(%1 -1)
+
+replace restart {
+	bz	%1
+%3:
+	br	%2
+%1:
+} by {
+	bnz	%2
+	; peephole 26 bz over an unused label and br -> bnz
+%1:
+} if labelRefCount(%3 0), labelRefCountChange(%1 -1)
+
+replace restart {
+%1:
+} by {
+	; peephole 27 removed unused label %1
+} if labelRefCount(%1 0)

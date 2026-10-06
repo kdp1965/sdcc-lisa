@@ -219,6 +219,24 @@ machine(struct mne *mp)
                         outrw(&e, R_PAG0);      /* code symbols: the word address */
                 break;
 
+        case S_LDXS:
+                /*
+                 * ldxs #expr: ldx with the two bytes of the literal
+                 * swapped, so that a following push ix (high half at the
+                 * lower address) leaves the value on the stack low byte
+                 * first.  A symbol is relocated with R_MSB on the word,
+                 * which the linker takes as "swap".
+                 */
+                t = addr(&e);
+                if (t != S_IMM)
+                        aerr();
+                outaw(op);
+                if (e.e_flag == 0 && e.e_base.e_ap == NULL)
+                        outaw(((e.e_addr & 0xFF) << 8) | ((e.e_addr >> 8) & 0xFF));
+                else
+                        outrw(&e, R_MSB);
+                break;
+
         case S_IF:
                 v = lisacond();
                 if (v & ~0x27)

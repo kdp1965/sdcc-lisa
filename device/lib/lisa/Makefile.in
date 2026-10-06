@@ -69,7 +69,7 @@ LISA_SDCC = $(COMMON_SDCC) \
 LISASOURCES = $(addprefix ../,$(LISA_FLOAT) $(LISA_INT) $(LISA_LONG) $(LISA_LONGLONG) $(LISA_SDCC))
 LISAOBJECTS = $(patsubst %.c,%.rel,$(LISA_FLOAT) $(LISA_INT) $(LISA_LONG) $(LISA_LONGLONG) $(LISA_SDCC))
 
-OBJ = setjmp.rel atomic_flag_test_and_set.rel heap.rel divu.rel bf16.rel bf16add.rel bf16c.rel
+OBJ = setjmp.rel atomic_flag_test_and_set.rel heap.rel divu.rel gptrget.rel bf16.rel bf16add.rel bf16c.rel
 
 LIB = lisa.lib
 # --bf16-float: the float support routines on the bfloat16 unit, linked

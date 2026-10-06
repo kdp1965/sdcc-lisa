@@ -64,12 +64,21 @@ static struct genState
      const char *base;
      int offset;
    } ix;
+  /* Track content of A: the byte it holds, so that loading it again is
+     skipped (see aTrack), and whether Z reflects it */
+  struct
+   {
+     enum { A_UNKNOWN, A_STK, A_DIR, A_LIT } kind;
+     int stk;             /* A_STK: entry-SP-relative offset */
+     char text[48];       /* A_DIR: the lda operand, A_LIT: the ldi operand */
+     bool zvalid;         /* Z == (A == 0) */
+   } a;
 }
 G;
 
 static void adjustStack (int n);
 static unsigned char litByte (const asmop *aop, int offset);
-static void loadA (const asmop *aop, int offset);
+static bool loadA (const asmop *aop, int offset);
 
 static struct asmop asmop_a, asmop_zero, asmop_one, asmop_mone;
 static struct asmop *const ASMOP_A = &asmop_a;
@@ -114,14 +123,124 @@ lisa_init_asmops (void)
 static int predicated = 0;
 
 static void
+aInvalidate (void)
+{
+  G.a.kind = A_UNKNOWN;
+  G.a.zvalid = false;
+}
+
+/* The A tracker: every emitted instruction passes through here.  A load
+   of a near stack byte, a direct byte or a literal is remembered; a
+   store makes A known as the stored byte when it was not; anything else
+   that writes A, a write that may hit the remembered byte, a label and
+   a call forget it.  Z reflects A after a load, not after a compare or
+   test.  A predicated instruction may not execute: whatever it would
+   have done to A is unknown. */
+static void
+aTrack (const char *inst, const char *opnd, bool pred)
+{
+  int n;
+  char junk;
+
+  if (!inst[0] || inst[0] == ';')
+    return;
+  /* a remembered stack byte that has been dropped (at or below SP) may be
+     overwritten by a push with something else */
+  if (G.a.kind == A_STK && G.a.stk + G.stack.pushed <= 0)
+    aInvalidate ();
+  /* what writes A */
+  if (!strcmp (inst, "ldax") || !strcmp (inst, "lda") || !strcmp (inst, "ldi") ||
+      !strcmp (inst, "pop") && !strcmp (opnd, "a") ||
+      !strcmp (inst, "swap") || !strcmp (inst, "swapi") || !strcmp (inst, "txa") || !strcmp (inst, "txau") ||
+      !strcmp (inst, "add") || !strcmp (inst, "adc") || !strcmp (inst, "sub") || !strcmp (inst, "and") ||
+      !strcmp (inst, "andi") || !strcmp (inst, "or") || !strcmp (inst, "xor") || !strcmp (inst, "mul") ||
+      !strcmp (inst, "mulu") || !strcmp (inst, "shl") || !strcmp (inst, "shr") || !strcmp (inst, "ldac") ||
+      !strcmp (inst, "ldirq") || !strcmp (inst, "tfa") || !strcmp (inst, "call") || !strcmp (inst, "jal") ||
+      !strcmp (inst, "div") || !strcmp (inst, "rem") || !strcmp (inst, "shl16") || !strcmp (inst, "shr16") ||
+      !strcmp (inst, "jmp") || !strcmp (inst, "ret") || !strcmp (inst, "rets"))
+    {
+      aInvalidate ();
+      if (pred)
+        return;
+      if (!strcmp (inst, "ldax") && sscanf (opnd, "%d(sp%c", &n, &junk) == 2 && junk == ')')
+        {
+          G.a.kind = A_STK;
+          G.a.stk = n - G.stack.pushed;
+          G.a.zvalid = true;
+        }
+      else if (!strcmp (inst, "lda") || !strcmp (inst, "ldi"))
+        {
+          G.a.kind = !strcmp (inst, "lda") ? A_DIR : A_LIT;
+          strncpy (G.a.text, opnd, sizeof (G.a.text) - 1);
+          G.a.text[sizeof (G.a.text) - 1] = 0;
+          G.a.zvalid = true;
+        }
+      else if (!strcmp (inst, "ldax") || !strcmp (inst, "pop") || !strcmp (inst, "add") || !strcmp (inst, "adc") ||
+               !strcmp (inst, "sub") || !strcmp (inst, "and") || !strcmp (inst, "andi") || !strcmp (inst, "or") ||
+               !strcmp (inst, "xor") || !strcmp (inst, "mul") || !strcmp (inst, "mulu") || !strcmp (inst, "swap") ||
+               !strcmp (inst, "swapi"))
+        G.a.zvalid = true;
+      return;
+    }
+  /* what writes memory A may be known as, or Z */
+  if (!strcmp (inst, "stax") || !strcmp (inst, "sta"))
+    {
+      if (pred)
+        return;
+      if (G.a.kind == A_UNKNOWN)
+        {
+          if (!strcmp (inst, "stax") && sscanf (opnd, "%d(sp%c", &n, &junk) == 2 && junk == ')')
+            {
+              G.a.kind = A_STK;
+              G.a.stk = n - G.stack.pushed;
+            }
+          else if (!strcmp (inst, "sta"))
+            {
+              G.a.kind = A_DIR;
+              strncpy (G.a.text, opnd, sizeof (G.a.text) - 1);
+              G.a.text[sizeof (G.a.text) - 1] = 0;
+            }
+        }
+      else if (!strcmp (inst, "stax") && (G.a.kind == A_STK || G.a.kind == A_DIR) && !strstr (opnd, "(sp)"))
+        aInvalidate ();                 /* through IX: may hit anything */
+      return;
+    }
+  if (!strcmp (inst, "inx") || !strcmp (inst, "dcx") || !strcmp (inst, "stxx"))
+    {
+      G.a.zvalid = false;
+      if (G.a.kind == A_STK && sscanf (opnd, "%d(sp%c", &n, &junk) == 2 && junk == ')')
+        {
+          if (n - G.stack.pushed == G.a.stk || !strcmp (inst, "stxx") && n + 1 - G.stack.pushed == G.a.stk)
+            aInvalidate ();
+        }
+      else if (G.a.kind == A_STK || G.a.kind == A_DIR)
+        aInvalidate ();                 /* through IX */
+      return;
+    }
+  if (!strcmp (inst, "cpi") || !strcmp (inst, "cmp") || !strcmp (inst, "btst") || !strcmp (inst, "ldz") ||
+      !strcmp (inst, "notz") || !strcmp (inst, "cpx") || !strcmp (inst, "fcmp") || !strcmp (inst, "lddiv"))
+    G.a.zvalid = false;
+  /* the rest leaves A and its memory alone: push, ads, adx, ldx, spix, tax,
+     taxu, sra, lra, push ix, pop ix, ldxx, ldc, savec, restc, if, br, bz,
+     bnz, eidi, amode, nop, the fpu register moves */
+}
+
+static void
 emit2 (const char *inst, const char *fmt, ...)
 {
   if (!regalloc_dry_run)
     {
-      va_list ap;
-      char buf[32];
+      va_list ap, ap2;
+      char buf[32], opnd[64];
+      bool pred = predicated > 0 && inst[0] && inst[0] != ';';
 
-      if (predicated > 0 && inst[0] && inst[0] != ';' && inst[0] != '\0')
+      va_start (ap, fmt);
+      va_copy (ap2, ap);
+      vsnprintf (opnd, sizeof (opnd), fmt, ap2);
+      va_end (ap2);
+      aTrack (inst, opnd, pred);
+
+      if (pred)
         {
           predicated--;
           SNPRINTF (buf, sizeof (buf), "%s.p", inst);
@@ -132,7 +251,6 @@ emit2 (const char *inst, const char *fmt, ...)
       else if (!strcmp (inst, "iftt") || !strcmp (inst, "ifte"))
         predicated = 2;
 
-      va_start (ap, fmt);
       va_emitcode (inst, fmt, ap);
       va_end (ap);
     }
@@ -185,6 +303,7 @@ emitLbl (const symbol *lbl)
   if (!regalloc_dry_run)
     emitLabel (lbl);
   ixInvalidate ();
+  aInvalidate ();
 }
 
 /*---------------------------------------------------------------------*/
@@ -509,6 +628,7 @@ aopForSym (const iCode *ic, symbol *sym)
   else if (sym && sym->onStack || sym && sym->iaccess)
     {
       aop = newAsmop (AOP_STK);
+      aop->vol = IS_VOLATILE (sym->type) || IS_VOLATILE (sym->etype);
       aop->size = getSize (sym->type);
       int base = sym->stack >= 0 ? sym->stack + G.stack.param_offset : sym->stack + 1 + G.stack.locals_base;
       for (int offset = 0; offset < aop->size && offset < 8; offset++)
@@ -527,6 +647,7 @@ aopForSym (const iCode *ic, symbol *sym)
       aop = newAsmop (sym && IN_CODESPACE (SPEC_OCLS (sym->etype)) ? AOP_CODE : AOP_DIR);
       if (sym)
         {
+          aop->vol = IS_VOLATILE (sym->type) || IS_VOLATILE (sym->etype);
           aop->aopu.immd = sym->rname;
           aop->aopu.immd_off = 0;
           aop->aopu.code = (aop->type == AOP_CODE);
@@ -766,21 +887,52 @@ ixLoadStackAddr (int stk_off)
 /* Loads and stores through A                                      */
 /*-----------------------------------------------------------------*/
 
-/* A <- aop[offset].  Note: ldi clears C, every load sets Z. Code space reads clobber IX and RA. */
-static void
+/* Does A hold this byte already (the A tracker)?  Never for a volatile
+   object or a peripheral register, and not known in a dry run. */
+static bool
+aHolds (const asmop *aop, int offset)
+{
+  /* not in a dry run, not under a predicate (the load must be there to
+     be skipped), not a volatile object or a peripheral register */
+  if (regalloc_dry_run || predicated > 0 || aop->vol || G.a.kind == A_UNKNOWN)
+    return (false);
+  if (G.a.kind == A_STK && G.a.stk + G.stack.pushed <= 0)
+    return (false);
+  if (offset >= aop->size && aop->type != AOP_STL && aop->type != AOP_LIT)
+    return (G.a.kind == A_LIT && !strcmp (G.a.text, "#0x00"));
+  switch (aop->type)
+    {
+    case AOP_STK:
+      return (G.a.kind == A_STK && !stkIsFar (aop, offset) && G.a.stk == stkEntryOffset (aop, offset));
+    case AOP_DIR:
+      return (G.a.kind == A_DIR && !aop->aopu.far && !strcmp (G.a.text, dirArg (aop, offset)));
+    case AOP_LIT:
+    case AOP_IMMD:
+      return (G.a.kind == A_LIT && !strcmp (G.a.text, immArg (aop, offset)));
+    default:
+      return (false);
+    }
+}
+
+/* A <- aop[offset].  Note: ldi clears C, every load sets Z. Code space reads
+   clobber IX and RA.  Returns true when nothing was emitted because A
+   holds the byte already (then Z need not reflect it: see loadOrBytes). */
+static bool
 loadA (const asmop *aop, int offset)
 {
+  if (aHolds (aop, offset))
+    return (true);
   if (offset >= aop->size && aop->type != AOP_STL && aop->type != AOP_LIT)
     {
       emit2 ("ldi", "#0x00");
       cost (1, 1);
-      return;
+      return (false);
     }
   switch (aop->type)
     {
     case AOP_REG:
       wassert_bt (aopInReg (aop, offset, A_IDX));
-      break;
+      return (true);
     case AOP_LIT:
     case AOP_IMMD:
       emit2 ("ldi", "%s", immArg (aop, offset));
@@ -852,6 +1004,7 @@ loadA (const asmop *aop, int offset)
     default:
       wassertl_bt (0, "Unknown aop type in loadA.");
     }
+  return (false);
 }
 
 static void ixNoteStore (const asmop *aop, int offset);
@@ -1091,18 +1244,28 @@ isUnsignedOp (const operand *op)
   return (IS_PTR (t) || !IS_SPEC (t) || SPEC_USIGN (t));
 }
 
+/* A <- aop[offset] with Z == (A == 0): a load sets Z, but one that
+   was skipped may have had it clobbered since. */
+static void
+loadAZ (const asmop *aop, int offset)
+{
+  if (loadA (aop, offset) && !G.a.zvalid)
+    {
+      emit2 ("cpi", "#0x00");
+      cost (1, 1);
+    }
+}
+
 /* Set A to the OR of all bytes of aop (Z then tells if it is zero).  A
    byte that is in A already needs an explicit test: whatever set the
    flags last (a compare, a swap) need not have been its load. */
 static void
 loadOrBytes (const asmop *aop, int size)
 {
-  loadA (aop, 0);
-  if (aop->type == AOP_REG && size <= 1)
-    {
-      emit2 ("cpi", "#0x00");
-      cost (1, 1);
-    }
+  if (size <= 1)
+    loadAZ (aop, 0);
+  else
+    loadA (aop, 0);
   for (int i = 1; i < size; i++)
     emitAluA ("or", aop, i);
 }
@@ -1190,6 +1353,7 @@ setupFrame (const iCode *ic)
   G.stack.locals_base = 0;
   G.ra_saved = false;
   ixInvalidate ();
+  aInvalidate ();
   if (IFFUNC_ISNAKED (ftype))
     return;
   G.ra_saved = functionClobbersRA (ic) || IFFUNC_ISISR (ftype);
@@ -1405,6 +1569,22 @@ genIpush (const iCode *ic)
   /* bytes are pushed high to low so that the low byte ends at the lowest address */
   for (int i = left->aop->size - 1; i >= 0; i--)
     {
+      /* a pair of literal bytes through IX: ldxs loads the word
+         byte-swapped, so that push ix (high half at the lower address)
+         lands it low byte first - 3 words for 2 bytes, and A is kept.
+         ldx sets ix_cond, which push ix puts out as bit 7 of that high
+         half: only for a low byte that has the bit set already (so not
+         for a symbol address, which the linker could tell but not fix) */
+      if (i >= 1 && left->aop->type == AOP_LIT && (litByte (left->aop, i - 1) & 0x80))
+        {
+          emit2 ("ldxs", "#0x%02x%02x", litByte (left->aop, i), litByte (left->aop, i - 1));
+          emit2 ("push", "ix");
+          cost (3, 4);
+          G.stack.pushed += 2;
+          ixInvalidate ();
+          i--;
+          continue;
+        }
       if (keep)
         pushA ();
       if (left->aop->type == AOP_STL)
@@ -1521,8 +1701,12 @@ genCall (const iCode *ic)
           slot.size = retsize;
           for (int i = 0; i < retsize && i < 8; i++)
             slot.aopu.bytes[i].byteu.stk = 1 - G.stack.pushed + i;   /* 1(sp) .. */
-          /* a narrower result (the division support calls): only its bytes */
-          genMove_o (IC_RESULT (ic)->aop, 0, &slot, 0, min (retsize, IC_RESULT (ic)->aop->size));
+          /* a narrower result (the division support calls): only its bytes.
+             High byte first, so that A ends up holding byte 0 for whatever
+             uses the result next (the A tracker) */
+          int n = min (retsize, IC_RESULT (ic)->aop->size);
+          for (int i = n - 1; i >= 0; i--)
+            cheapMove (IC_RESULT (ic)->aop, i, &slot, i);
         }
       freeAsmop (IC_RESULT (ic));
     }
@@ -2153,17 +2337,23 @@ genXor (const iCode *ic)
    sides by 0x80 and compares unsigned.  A signed compare against a memory
    byte branches on the zero case. */
 
+/* The condition that is true exactly when cc is false (lt is C && !Z,
+   ge is !C || Z, and so on), or 0 for a code that is not known. */
 static const char *
 condInverse (const char *cc)
 {
-  if (!strcmp (cc, "lt")) return "ge";
-  if (!strcmp (cc, "gt")) return "le";
-  if (!strcmp (cc, "slt")) return "sge";
-  if (!strcmp (cc, "sgt")) return "sle";
-  if (!strcmp (cc, "eq")) return "ne";
-  if (!strcmp (cc, "ne")) return "eq";
-  if (!strcmp (cc, "c")) return "nc";
-  return "c";
+  static const char *const pairs[][2] = {
+    {"lt", "ge"}, {"gt", "le"}, {"slt", "sge"}, {"sgt", "sle"}, {"eq", "ne"}, {"z", "nz"}, {"c", "nc"},
+    {"gte", "lt"}, {"lte", "gt"}, {"sgte", "slt"}, {"slte", "sgt"}, {0, 0}
+  };
+  for (int i = 0; pairs[i][0]; i++)
+    {
+      if (!strcmp (cc, pairs[i][0]))
+        return (pairs[i][1]);
+      if (!strcmp (cc, pairs[i][1]))
+        return (pairs[i][0]);
+    }
+  return (0);
 }
 
 /* A <- left[i]; compare with right[i] (a literal or in memory), leaving C
@@ -2256,6 +2446,52 @@ genCmp (const iCode *ic, iCode *ifx)
   symbol *tlbl_false = regalloc_dry_run ? 0 : newiTempLabel (0);
   symbol *tlbl_done = regalloc_dry_run ? 0 : newiTempLabel (0);
 
+  /* against the literal 0: left < 0 (signed) is the sign bit of the top
+     byte, and a byte can not be below 0, so the chain below only has to
+     look for a non-zero byte */
+  bool litzero = (raop->type == AOP_LIT);
+  for (int i = 0; litzero && i < size; i++)
+    if (litByte (raop, i))
+      litzero = false;
+  if (litzero && (sign ? lt : !lt))
+    {
+      const char *cc;
+      if (sign)
+        {
+          loadA (laop, size - 1);
+          emit2 ("btst", "7");          /* Z = bit 7 */
+          cost (1, 1);
+          cc = "eq";
+        }
+      else
+        {
+          /* unsigned left > 0: not zero */
+          loadOrBytes (laop, size);
+          cc = "ne";
+        }
+      if (ifx)
+        {
+          if (IC_TRUE (ifx))
+            emitBranch (!strcmp (cc, "eq") ? "bz" : "bnz", IC_TRUE (ifx));
+          else
+            emitBranch (!strcmp (cc, "eq") ? "bnz" : "bz", IC_FALSE (ifx));
+          ifx->generated = 1;
+        }
+      else
+        {
+          emit2 ("ldac", "%s", cc);
+          cost (1, 1);
+          storeA (result->aop, 0);
+          for (int i = 1; i < result->aop->size; i++)
+            {
+              emit2 ("ldi", "#0x00");
+              cost (1, 1);
+              storeA (result->aop, i);
+            }
+        }
+      goto release;
+    }
+
   /* single byte with correct flags after one sequence: no labels needed */
   if (size == 1 && (litright || !sign))
     {
@@ -2327,6 +2563,29 @@ genCmp (const iCode *ic, iCode *ifx)
           cost (1, 1);
           emitBranch ("bnz", lt ? tlbl_false : tlbl_true);
           emitLbl (tlbl_next);
+          continue;
+        }
+
+      if (litzero)
+        {
+          if (s)
+            {
+              /* the signed top byte against 0: negative is below, 0 goes on, else above */
+              loadA (laop, i);
+              emit2 ("btst", "7");
+              cost (1, 1);
+              emitBranch ("bz", lt ? tlbl_true : tlbl_false);     /* Z = bit 7 */
+              emit2 ("cpi", "#0x00");
+              cost (1, 1);
+              emitBranch ("bnz", lt ? tlbl_false : tlbl_true);
+              continue;
+            }
+          /* a byte is never below 0: non-zero is above, and the last one
+             can not make the left side smaller */
+          if (lt && last)
+            break;
+          loadAZ (laop, i);
+          emitBranch ("bnz", lt ? tlbl_false : tlbl_true);
           continue;
         }
 
@@ -3573,6 +3832,42 @@ genPointerGet (const iCode *ic)
       goto release;
     }
 
+  /* out of line (lib/lisa/gptrget.s) unless speed matters: the helpers
+     read a byte and leave the raw address of the next one in IX with
+     the space in C, which the stores between the calls keep */
+  if (!optimize.codeSpeed && off <= 127)
+    {
+      if (ptype == CPOINTER)
+        emit2 ("jal", off ? "__gptrcode" : "__gptrcode");
+      else if (off)
+        {
+          emit2 ("ldi", "#0x%02x", off);
+          cost (1, 1);
+          emit2 ("jal", "__gptrgeto");
+        }
+      else
+        emit2 ("jal", "__gptrget");
+      cost (1, 12);
+      if (ptype == CPOINTER && off)
+        {
+          /* the pointer was turned into the word of its first pair: the
+             helper is re-entered past the offset */
+          emit2 ("adx", "#%d", 2 * off);
+          emit2 ("jal", "__gptrword");
+          cost (2, 10);
+        }
+      ixInvalidate ();
+      storeA (result->aop, 0);
+      for (int i = 1; i < size; i++)
+        {
+          emit2 ("jal", "__gptrnext");
+          cost (1, 12);
+          ixInvalidate ();
+          storeA (result->aop, i);
+        }
+      goto release;
+    }
+
   if (ptype == CPOINTER)
     {
       ixCodePtrToWord ();
@@ -4567,6 +4862,7 @@ genLisaiCodeOp (iCode *ic)
     case INLINEASM:
       genInline (ic);
       ixInvalidate ();
+      aInvalidate ();
       break;
 
     case GETABIT:
@@ -4776,7 +5072,7 @@ relaxBranches (lineNode *head)
                           lineNode *pif = pl->prev;
                           while (pif && (pif->isComment || pif->isDebug))
                             pif = pif->prev;
-                          if (pif && pif->line && !strncmp (pif->line, "if\t", 3))
+                          if (pif && pif->line && !strncmp (pif->line, "if\t", 3) && condInverse (pif->line + 3))
                             {
                               char *nif = Safe_alloc (16);
                               SNPRINTF (nif, 16, "if\t%s", condInverse (pif->line + 3));
@@ -4824,6 +5120,7 @@ dryLisaiCode (iCode *ic)
 
   initGenLineElement ();
   ixInvalidate ();
+  aInvalidate ();
 
   genLisaiCode (ic);
 

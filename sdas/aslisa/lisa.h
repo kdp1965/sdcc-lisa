@@ -52,6 +52,7 @@
 #define S_RET     71    /* ret  [#imm8]                                    */
 #define S_LDDIV   72    /* lddiv n(sp): two words, the offset of the high byte   */
 #define S_DIVREM  73    /* div/rem dv[, n(sp)]: offset word unless dv bit 0 is set */
+#define S_LDXS    74    /* ldxs #expr: ldx with the literal word byte-swapped       */
 
 /*
  * Addressing modes returned by addr().

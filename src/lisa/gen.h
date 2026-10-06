@@ -78,6 +78,7 @@ typedef struct asmop
     asmop_byte bytes[8];
   } aopu;
   struct valinfo valinfo;
+  bool vol;             /* a volatile object: every access is emitted */
 }
 asmop;
 

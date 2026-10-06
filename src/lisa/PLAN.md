@@ -124,7 +124,8 @@ asxxxx target with lisa_as-compatible syntax so existing `.S` sources port easil
   - shifts: `shl`/`shr` (after `ldc 0`), `shl16/shr16 n(sp)` for 16-bit operands at
     0..3(sp).
 * `peeph.def`: `stax n ; ldax n` -> `stax n`; `br` to next; `ldi 0 ; stax x` chains;
-  `if ne ; br L` -> `bnz L` etc.
+  `if ne ; br L` -> `bnz L` etc.; branch threading and inversion, dead
+  code and labels (2026-10-06).
 * `device/lib/lisa`: `crt0.s` (vectors, `__sdcc_gsinit_startup`, call `_main`),
   generic C library built with the port, `__gptrget`/`__gptrput` helpers.
 * `device/include/lisa`: `tt07.h` with the peripheral map.
@@ -232,10 +233,32 @@ of the larger operand as {0x80|f, 0x00}, the smaller one shifted into
 the pair with shr16, so a byte of guard bits and one-byte rounding) at
 160-230 cycles; a float add is 240 cycles all in, a multiply 100.
 
+Code size (2026-10-06, a 19.5K-word sample of library and test code
+-6.5%): the A tracker in `gen.c` (`G.a`: what byte A holds - a stack
+slot, a direct symbol or a literal - and whether Z still reflects it;
+`loadA` skips the reload, `loadAZ` adds a `cpi #0` when Z is needed;
+volatile objects are never tracked, labels, calls, predicated code and
+stores through IX forget).  Compares against the literal 0 (`genCmp`):
+signed `x < 0` is `btst 7` of the top byte, unsigned `x > 0` an or of
+the bytes, and a zero literal byte in a chain is `ldax; bnz`.  Reads
+through generic and `__code` pointers go out of line unless
+`--opt-code-speed` (`device/lib/lisa/gptrget.s`: `__gptrget`,
+`__gptrgeto` with an offset in A, `__gptrcode`, and `__gptrnext` for the
+following bytes - the raw address stays in IX and the space in C, since
+no IX arithmetic keeps ix_cond): 2 words per byte instead of 12 for the
+first and 2 for the rest.  Peepholes: branch threading
+(`labelIsUncondJump` knows `br`), branches around a `br` inverted,
+unreachable code after a `br` and unused labels dropped; `condInverse`
+must know every code the rules can leave (`ge`, `le`: the relaxer
+inverts it again).  A 16-bit literal is pushed as `ldxs #lit; push ix`
+(3 words) only when its low byte has bit 7 set: `ldx` sets ix_cond, and
+`push ix` puts that out as bit 7 of the high half - so never for a
+symbol address.
+
 Not done / next:
-* Code quality: more peepholes
-  (`ldax x; stax x`, `ldi 0; stax a; ldi 0; stax b`, compare-then-branch
-  fusion), 32-bit division on the 16-bit divider.
+* Code quality: 32-bit division on the 16-bit divider, the pointer-write
+  side (`stax k(ix)` already) and IPUSH_VALUE_AT_ADDRESS through the
+  helpers, `x >= 0` as a value (`btst 7; ldac ne`).
 * `ROT` and `GETWORD` are not claimed (`hasExtBitOp`: GETBYTE only), so
   SDCC lowers them itself; `__critical` is just eidi (no interrupt state
   to save: `ie` cannot be read).

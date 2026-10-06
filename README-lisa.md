@@ -99,7 +99,18 @@ build/bin/sdcc -mlisa -o prog.ihx prog.c          # Intel HEX, byte addresses = 
   pairs (two words per byte); a pointer to them is the pair index with bit
   15 set, which is what the generic-pointer code tests at run time.
   Constant data initializers that point into code space are scaled
-  accordingly (`src/SDCCval.c`, `lisaCodeScale`).
+  accordingly (`src/SDCCval.c`, `lisaCodeScale`).  A read through a
+  generic or `__code` pointer is a call to `__gptrget` / `__gptrnext`
+  (`device/lib/lisa/gptrget.s`, 2 words per byte); `--opt-code-speed`
+  puts the space test and the `call ix` loop inline instead (12 words
+  for the first byte, but a few cycles faster per byte - string loops
+  care).
+* Code size: `gen.c` tracks what A holds and skips reloads, compares
+  against 0 are sign-bit tests or `bnz` chains, and the peephole rules
+  (`src/lisa/peeph.def`) thread branches and drop dead code; `--no-peep`
+  turns the rules off.  `ldxs #lit; push ix` pushes a 16-bit literal in 3
+  words, but only one whose low byte has bit 7 set: `ldx` sets ix_cond
+  and `push ix` writes it as bit 7 of the high half.
 
 ## Peripherals and interrupts
 

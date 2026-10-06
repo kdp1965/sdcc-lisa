@@ -211,6 +211,7 @@ struct  mne     mne[] = {
 
         /* ix / sp / ra */
     {   NULL,   "ldx",          S_LDX,          0,      0xA180    },
+    {   NULL,   "ldxs",         S_LDXS,         0,      0xA180    },
     {   NULL,   "tax",          S_INH,          0,      0xA100    },
     {   NULL,   "taxu",         S_INH,          0,      0xA108    },
     {   NULL,   "txa",          S_INH,          0,      0xA010    },

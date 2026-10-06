@@ -671,6 +671,10 @@ FBYNAME (labelIsUncondJump)
     {
       jpInst = "goto";
     }
+  else if (TARGET_IS_LISA)
+    {
+      jpInst = "br";
+    }
   len = strlen(jpInst);
   if (strncmp(p, jpInst, len))
     {
@@ -680,6 +684,8 @@ FBYNAME (labelIsUncondJump)
     }
 
   p += len;
+  if (TARGET_IS_LISA && *p && !ISCHARSPACE(*p))
+    return FALSE; /* br.p (predicated), brk */
   while (*p && ISCHARSPACE(*p))
     p++;
 

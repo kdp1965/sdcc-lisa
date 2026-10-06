@@ -447,6 +447,11 @@ relr3(void)
                                 if (!(mode & R3_BYTE))
                                         mode &= ~(R3_USGN | R3_PAG0);
                         }
+                        /* R3_MSB on a word: the bytes swapped (ldxs) */
+                        if (!(mode & R3_BYTE) && (mode & R3_MSB)) {
+                                v = ((v & 0xFF) << 8) | ((v >> 8) & 0xFF);
+                                mode &= ~R3_MSB;
+                        }
 
                         for (k = 0; k < n; k++)
                                 rtval[rtp + k] = (v >> (8 * k)) & 0xFF;
