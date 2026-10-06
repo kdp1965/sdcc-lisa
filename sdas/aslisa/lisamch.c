@@ -242,6 +242,42 @@ machine(struct mne *mp)
                 outaw(op | twobits());
                 break;
 
+        case S_LDDIV:
+                /*
+                 * lddiv n(sp): IX[7:0] <- A, RA[7:0] <- n(sp); the
+                 * offset is the second word.
+                 */
+                t = addr(&e);
+                if (t != S_SPO && t != S_IMM)
+                        aerr();
+                abscheck(&e);
+                if (e.e_addr > 511)
+                        aerr();
+                outaw(op);
+                outaw(e.e_addr & 0x1FF);
+                break;
+
+        case S_DIVREM:
+                /*
+                 * div dv, n(sp) / rem dv, n(sp): dv[0] = 0 takes the
+                 * divisor's high byte from n(sp) (the second word) and
+                 * writes the result's high byte back there; dv[0] = 1 is
+                 * an 8-bit divisor and a single word.
+                 */
+                v = twobits();
+                outaw(op | v);
+                if ((v & 1) == 0) {
+                        comma(1);
+                        t = addr(&e);
+                        if (t != S_SPO && t != S_IMM)
+                                aerr();
+                        abscheck(&e);
+                        if (e.e_addr > 511)
+                                aerr();
+                        outaw(e.e_addr & 0x1FF);
+                }
+                break;
+
         case S_U3:
                 v = (int) absexpr();
                 if (v & ~7)

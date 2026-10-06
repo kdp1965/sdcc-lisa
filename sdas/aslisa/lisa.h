@@ -50,6 +50,8 @@
 #define S_CALL    69    /* call ix                                         */
 #define S_JMP     70    /* jmp ix                                          */
 #define S_RET     71    /* ret  [#imm8]                                    */
+#define S_LDDIV   72    /* lddiv n(sp): two words, the offset of the high byte   */
+#define S_DIVREM  73    /* div/rem dv[, n(sp)]: offset word unless dv bit 0 is set */
 
 /*
  * Addressing modes returned by addr().

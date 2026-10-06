@@ -259,9 +259,9 @@ struct  mne     mne[] = {
     {   NULL,   "nop",          S_INH,          0,      0xA070    },
 
         /* divider */
-    {   NULL,   "lddiv",        S_INH,          0,      0xA170    },
-    {   NULL,   "div",          S_U2,           0,      0xA300    },
-    {   NULL,   "rem",          S_U2,           0,      0xA310    },
+    {   NULL,   "lddiv",        S_LDDIV,        0,      0xA170    },
+    {   NULL,   "div",          S_DIVREM,       0,      0xA300    },
+    {   NULL,   "rem",          S_DIVREM,       0,      0xA310    },
 
         /* bf16 */
     {   NULL,   "tfa",          S_BIT,          0,      0xA1E0    },

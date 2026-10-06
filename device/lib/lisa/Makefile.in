@@ -21,11 +21,9 @@ LISA_INT = $(COMMON_INT) \
   _mulschar.c \
   _divuchar.c \
   _divschar.c \
-  _divuint.c \
   _divsint.c \
   _moduchar.c \
   _modschar.c \
-  _moduint.c \
   _modsint.c
 
 LISA_LONG = $(COMMON_LONG) \
@@ -71,7 +69,7 @@ LISA_SDCC = $(COMMON_SDCC) \
 LISASOURCES = $(addprefix ../,$(LISA_FLOAT) $(LISA_INT) $(LISA_LONG) $(LISA_LONGLONG) $(LISA_SDCC))
 LISAOBJECTS = $(patsubst %.c,%.rel,$(LISA_FLOAT) $(LISA_INT) $(LISA_LONG) $(LISA_LONGLONG) $(LISA_SDCC))
 
-OBJ = setjmp.rel atomic_flag_test_and_set.rel heap.rel
+OBJ = setjmp.rel atomic_flag_test_and_set.rel heap.rel divu.rel
 
 LIB = lisa.lib
 AS = $(SAS)

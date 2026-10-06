@@ -195,10 +195,29 @@ Bugs it shook out: a call returning int into a one-byte result (the 8-bit
 division helpers) loaded the high byte of the return slot after the low
 byte, and an ifx on a byte in A took Z from an earlier `cpi` on it.
 
+The divider and the 16-bit shifts (2026-10-06): `shl16`/`shr16` shift
+`{n(sp), A}` as a pair for 16-bit shifts by 2 or more bits (in place when
+the high byte sits at 1..3(sp), else pushed to 1(sp)) and for variable
+counts (loop of `dcx`/`if c`/`shl16`); the fill is C, so the sign of an
+arithmetic shift is put in C once (kept in the save shadow across the
+loop's `dcx`).  Unsigned `/` and `%` on the hardware divider inline
+(`_hasNativeMulFor`), the signed helpers on top of `__divuint`/
+`__moduint` in `device/lib/lisa/divu.s`.  What the TT07 silicon does
+(probed with `test_divprobe.c`, `lisa_isa.md` divider notes): the
+result's high byte is not stored; the forms with offset bit 1 clear (or
+`div 1`) write the low byte to a stray address (only `div 3` and the
+slot at 2(sp) are emitted); every division leaves IX = 0 and RA = the
+16-bit result (`xchg ra; txau; andi #0x7f` gives the high byte; every
+division is an RA clobber for the prologue), 15 bits of it: a quotient
+by 1 has no high byte there and a remainder of 0x8000 or more loses its
+top bit (the regression's arith-rand found that one) - so a 16-bit
+quotient or remainder by a variable divisor is `__divuint`/`__moduint`,
+which check (q = a for b == 1; r = a - q*b with q 0 or 1 for b >= 0x8000).
+
 Not done / next:
 * Code quality: more peepholes
   (`ldax x; stax x`, `ldi 0; stax a; ldi 0; stax b`, compare-then-branch
-  fusion), `shl16/shr16` for 16-bit shifts at 0..3(sp), hardware `div`/`rem`.
+  fusion), 32-bit division on the 16-bit divider.
 * Bit fields, `ROT`, `GETWORD`, `IPUSH_VALUE_AT_ADDRESS` (struct
   arguments), `__critical` beyond eidi, floats in the library.
 * Interrupt handlers: `__interrupt(n)` works on a core with sane interrupt

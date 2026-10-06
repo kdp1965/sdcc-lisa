@@ -62,6 +62,18 @@ build/bin/sdcc -mlisa -o prog.ihx prog.c          # Intel HEX, byte addresses = 
   objects are laid out nearest SP and bytes beyond the reach are addressed
   through an IX window (`spix`, chained `adx`, `n(ix)`; SP never moves, so
   interrupts are safe), so frames are limited only by RAM.
+* Division: unsigned 8- and 16-bit `/` and `%` use the hardware divider
+  (`lddiv`, `div`, `rem`); the signed helpers in the library work on
+  magnitudes with it.  On the TT07 silicon the result's high byte is not
+  stored but every division leaves the 16-bit result in RA (the compiler
+  reads it from there, and counts every division as an RA clobber), the
+  forms with the divisor's high byte at `1(sp)` or the one-word `div 1`
+  write the low byte to a stray address (only `div 3` and the slot at
+  `2(sp)` are emitted), and RA is 15 bits with no high byte at all for a
+  quotient by 1 - so a 16-bit quotient or remainder by a variable divisor
+  is the library's `__divuint` / `__moduint`, which check - see the
+  silicon notes in `lisa_isa.md`.  16-bit shifts use `shl16` / `shr16`
+  on the `{n(sp), A}` pair.
 * Registers: one-byte temporaries are kept in A where the register
   allocator (`src/lisa/ralloc2.cc`, SDCC's tree-decomposition allocator
   with a dry-run cost model) finds it cheaper; everything else lives on

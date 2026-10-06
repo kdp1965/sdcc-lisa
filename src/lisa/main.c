@@ -276,10 +276,34 @@ _hasNativeMulFor (iCode *ic, sym_link *left, sym_link *right)
 {
   int result_size = IS_SYMOP (IC_RESULT (ic)) ? getSize (OP_SYM_TYPE (IC_RESULT (ic))) : 4;
 
-  if (ic->op != '*')
-    return (false);
   if (IS_BITINT (OP_SYM_TYPE (IC_RESULT (ic))) && SPEC_BITINTWIDTH (OP_SYM_TYPE (IC_RESULT (ic))) % 8)
     return false;
+
+  /* the hardware divider does a 16-bit unsigned division (amode[1], the
+     signed mode, stays off: it cannot be restored by an interrupt
+     handler); the signed helpers in the library work on magnitudes */
+  if (ic->op == '/' || ic->op == '%')
+    {
+      if (result_size > 2 || getSize (left) > 2 || getSize (right) > 2 ||
+          !IS_SPEC (left) || !SPEC_USIGN (left) || !IS_SPEC (right) || !SPEC_USIGN (right))
+        return (false);
+      /* a 16-bit result's high byte comes from RA, 15 bits: a quotient
+         by 1 (the TT07 silicon leaves its high byte 0 there) and a
+         remainder of 0x8000 or more (by a divisor above 0x8000) cannot
+         be read from it, so with a divisor that could be either - not a
+         literal, nor a byte for the remainder - the library's __divuint
+         / __moduint do it, with the checks */
+      if (result_size == 2 && getSize (left) == 2)
+        {
+          if (IS_OP_LITERAL (IC_RIGHT (ic)))
+            return (ic->op == '/' || operandLitValue (IC_RIGHT (ic)) < 0x8000);
+          return (ic->op == '%' && getSize (right) == 1);
+        }
+      return (true);
+    }
+
+  if (ic->op != '*')
+    return (false);
 
   /* mul / mulu give an 8x8 -> 16 product in one instruction each; a
      16-bit product of two 8-bit operands needs them to agree in

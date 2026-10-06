@@ -1139,7 +1139,9 @@ functionClobbersRA (const iCode *ic)
     {
       if (ic->op == CALL || ic->op == PCALL)
         return (true);
-      if (ic->op == '/' || ic->op == '%')   /* library calls */
+      /* division: a library call, or the hardware divider, which leaves
+         its result in RA */
+      if (ic->op == '/' || ic->op == '%')
         return (true);
       if (ic->op == GET_VALUE_AT_ADDRESS || ic->op == IPUSH_VALUE_AT_ADDRESS)
         {
@@ -2665,6 +2667,116 @@ genShift (const iCode *ic, bool left_shift)
 
       /* multi-byte: whole bytes first */
       int bytes = n / 8, bits = n % 8;
+
+      /* 16 bits: by a whole byte, the moved byte is shifted in A alone;
+         by 1..7 bits, shl16 / shr16 shift {n(sp), A} as a pair (the high
+         byte is pushed to 1(sp) unless it is there already), with C as the
+         bit shifted in (amode 1): 0, or the sign set once (it stays, the
+         shifts do not touch C) */
+      if (size == 2 && left->aop->size == 2 && bytes == 1)
+        {
+          if (left_shift)
+            {
+              loadA (left->aop, 0);
+              for (int i = 0; i < bits; i++)
+                {
+                  emit2 ("shl", "");
+                  cost (1, 1);
+                }
+              if (bits)
+                {
+                  emit2 ("andi", "#0x%02x", (0xff << bits) & 0xff);
+                  cost (1, 1);
+                }
+              storeA (result->aop, 1);
+              emit2 ("ldi", "#0x00");
+              cost (1, 1);
+              storeA (result->aop, 0);
+            }
+          else
+            {
+              loadA (left->aop, 1);
+              for (int i = 0; i < bits; i++)
+                {
+                  emit2 ("shr", "");
+                  cost (1, 1);
+                }
+              if (bits)
+                {
+                  emit2 ("andi", "#0x%02x", 0xff >> bits);
+                  cost (1, 1);
+                  if (sign)
+                    {
+                      emit2 ("ldc", "#0");
+                      emit2 ("btst", "%d", 7 - bits);
+                      emit2 ("if", "z");
+                      emit2 ("adc", "#0x%02x", (0xff << (8 - bits)) & 0xff);
+                      cost (4, 4);
+                    }
+                }
+              storeA (result->aop, 0);
+              if (sign)
+                {
+                  emit2 ("btst", "7");
+                  emit2 ("ifte", "z");
+                  emit2 ("ldi", "#0xff");
+                  emit2 ("ldi", "#0x00");
+                  cost (4, 4);
+                }
+              else
+                {
+                  emit2 ("ldi", "#0x00");
+                  cost (1, 1);
+                }
+              storeA (result->aop, 1);
+            }
+          goto release;
+        }
+      if (size == 2 && left->aop->size == 2 && bits)
+        {
+          bool inplace = aopSame (result->aop, 0, left->aop, 0, 2) && result->aop->type == AOP_STK &&
+                         !stkIsFar (result->aop, 1) && stkOffset (result->aop, 1) <= 3;
+          /* one bit, byte-wise, is as short and quicker */
+          if (inplace || bits > 1)
+            {
+              const char *sh = left_shift ? "shl16" : "shr16";
+              char hi[8];
+              if (inplace)
+                SNPRINTF (hi, sizeof (hi), "%d", stkOffset (result->aop, 1));
+              else
+                strcpy (hi, "1");
+              if (!inplace)
+                {
+                  loadA (left->aop, 1);
+                  if (!left_shift && sign)
+                    emitSignToC ();
+                  pushA ();
+                }
+              else if (!left_shift && sign)
+                loadA (left->aop, 1), emitSignToC ();
+              if (!left_shift && sign)
+                loadAKeepC (left->aop, 0);
+              else
+                {
+                  loadA (left->aop, 0);
+                  emit2 ("ldc", "#0");
+                  cost (1, 1);
+                }
+              for (int b = 0; b < bits; b++)
+                {
+                  emit2 (sh, "%s(sp)", hi);
+                  cost (1, 2);
+                }
+              storeA (result->aop, 0);
+              if (!inplace)
+                {
+                  popA ();
+                  storeA (result->aop, 1);
+                }
+              goto release;
+            }
+        }
+
       if (left_shift)
         {
           for (int i = size - 1; i >= 0; i--)
@@ -2719,6 +2831,41 @@ genShift (const iCode *ic, bool left_shift)
        count (an operand that dies here) */
     loadA (right->aop, 0);
     pushA ();
+
+    /* 16 bits: the pair {1(sp), A} shifted by shl16 / shr16, the count
+       at 2(sp) counted down with dcx (C: it was 0 already).  The bit
+       shifted in is C: 0, or the sign kept in the save shadow */
+    if (size == 2 && left->aop->size == 2)
+      {
+        loadA (left->aop, 1);
+        if (!left_shift && sign)
+          {
+            emitSignToC ();
+            emit2 ("savec", "");
+            cost (1, 1);
+          }
+        pushA ();
+        loadA (left->aop, 0);
+        emitLbl (tlbl);
+        emit2 ("dcx", "2(sp)");
+        emit2 ("if", "c");
+        cost (2, 3);
+        emitBranch ("br", tlbl_done);
+        if (!left_shift && sign)
+          emit2 ("restc", "");
+        else
+          emit2 ("ldc", "#0");
+        emit2 (left_shift ? "shl16" : "shr16", "1(sp)");
+        cost (2, 3);
+        emitBranch ("br", tlbl);
+        emitLbl (tlbl_done);
+        storeA (result->aop, 0);
+        popA ();
+        storeA (result->aop, 1);
+        adjustStack (1);
+        goto release;
+      }
+
     genMove (result->aop, left->aop);
     emitLbl (tlbl);
     emit2 ("ldax", "1(sp)");
@@ -2946,6 +3093,173 @@ genMult (const iCode *ic)
     }
 
   fixBitIntResult (ic, false);
+  freeAsmop (left);
+  freeAsmop (right);
+  freeAsmop (result);
+}
+
+/*-----------------------------------------------------------------*/
+/* genDivMod - unsigned division / modulus on the hardware divider */
+/*-----------------------------------------------------------------*/
+
+/* The divider takes the dividend from {RA[7:0], IX[7:0]} (lddiv n(sp):
+   IX[7:0] <- A, RA[7:0] <- n(sp); or tax for an 8-bit one) and the
+   divisor from {n(sp), A} (div 0, n(sp)) or A alone (div 3, both 8-bit);
+   dv bit 1 marks an 8-bit dividend.  The low byte of the result comes
+   back in A, and the whole 16 bits in RA (ra_cond set); IX is zeroed.
+   TT07 silicon: the result's high byte is not stored to the stack as the
+   RTL intends, and the forms whose second word has bit 1 clear (offsets
+   0, 1, 4, 5 ...; the one-word div 1) write the low byte to the offset's
+   address instead - so the divisor's high byte goes to 2(sp), and the
+   high byte of the result is read from RA (xchg ra; txau).  Signed mode
+   is amode[1], which stays off: everything here is unsigned. */
+static void
+genDivMod (const iCode *ic)
+{
+  operand *result = IC_RESULT (ic);
+  operand *left = IC_LEFT (ic);
+  operand *right = IC_RIGHT (ic);
+  const char *op = (ic->op == '/') ? "div" : "rem";
+
+  D (emit2 ("; genDivMod", ""));
+
+  aopOp (left, ic);
+  aopOp (right, ic);
+  aopOp (result, ic);
+
+  int lsize = left->aop->size, rsize = right->aop->size, size = result->aop->size;
+  asmop *laop = left->aop, *raop = right->aop;
+  asmop tmp;
+  int pushed = 0;
+
+  /* by one: the quotient is the dividend (the divider's RA would say 0
+     for the high byte), the remainder 0 */
+  if (raop->type == AOP_LIT && aopIsLitVal (raop, 0, rsize, 1))
+    {
+      if (ic->op == '/')
+        genMove (result->aop, laop);
+      else
+        for (int i = 0; i < size; i++)
+          cheapMove (result->aop, i, ASMOP_ZERO, 0);
+      goto release;
+    }
+
+  /* the divisor is loaded after the dividend sits in IX / RA: a code
+     space read (call ix) or a stack address (spix) would clobber them,
+     and a byte in A has to be taken now */
+  if (raop->type == AOP_CODE || raop->type == AOP_STL || raop->type == AOP_REG)
+    {
+      if (laop->type == AOP_REG)
+        {
+          /* the dividend is in A too: it goes first */
+          pushA ();
+          memset (&tmp, 0, sizeof (tmp));
+          tmp.type = AOP_STK;
+          tmp.size = 1;
+          tmp.aopu.bytes[0].byteu.stk = 1 - G.stack.pushed;
+          laop = &tmp;
+          pushed++;
+        }
+      asmop *rt = Safe_calloc (1, sizeof (asmop));
+      rt->type = AOP_STK;
+      rt->size = rsize;
+      for (int i = rsize - 1; i >= 0; i--)
+        {
+          loadA (raop, i);
+          pushA ();
+        }
+      for (int i = 0; i < rsize; i++)
+        rt->aopu.bytes[i].byteu.stk = 1 + i - G.stack.pushed;
+      raop = rt;
+      pushed += rsize;
+    }
+
+  /* the dividend */
+  int dv = 0;
+  if (lsize == 1)
+    {
+      loadA (laop, 0);
+      emit2 ("tax", "");
+      cost (1, 1);
+      dv = 2;
+    }
+  else if (laop->type == AOP_STK && !stkIsFar (laop, 0) && !stkIsFar (laop, 1))
+    {
+      loadA (laop, 0);
+      emit2 ("lddiv", "%s", stkArg (laop, 1));
+      cost (2, 2);
+    }
+  else
+    {
+      loadA (laop, 1);
+      pushA ();
+      loadA (laop, 0);
+      emit2 ("lddiv", "1(sp)");
+      cost (2, 2);
+      adjustStack (1);
+    }
+  ixInvalidate ();
+
+  /* the divisor: a byte (an operand of one, or a literal below 256) */
+  bool r8 = (rsize == 1 || raop->type == AOP_LIT && aopIsLitVal (raop, 1, 1, 0));
+  if (dv == 2 && r8)
+    {
+      loadA (raop, 0);
+      emit2 (op, "3");
+      cost (1, 2);
+    }
+  else
+    {
+      /* the high byte at 2(sp): pushed twice (the second one is the copy under it) */
+      if (r8)
+        {
+          emit2 ("ldi", "#0x00");
+          cost (1, 1);
+        }
+      else
+        loadA (raop, 1);
+      pushA ();
+      pushA ();
+      loadA (raop, 0);
+      emit2 (op, "%d, 2(sp)", dv);
+      cost (2, 2);
+      adjustStack (2);
+    }
+  storeA (result->aop, 0);
+  if (size > 1)
+    {
+      /* the high byte from RA (15 bits; bit 7 of the upper half is
+         ra_cond): _hasNativeMulFor only lets the cases through where it
+         fits - a 16-bit quotient by a literal (RA says 0 for a divisor of
+         1, which genMove handled above), a remainder by a literal below
+         0x8000.  An 8-bit dividend, or a remainder by a byte, cannot have
+         one */
+      if (dv == 2 || ic->op == '%' && r8)
+        {
+          emit2 ("ldi", "#0x00");
+          cost (1, 1);
+        }
+      else
+        {
+          emit2 ("xchg", "ra");
+          emit2 ("txau", "");
+          emit2 ("andi", "#0x7f");
+          cost (3, 3);
+        }
+      storeA (result->aop, 1);
+      for (int i = 2; i < size; i++)
+        {
+          emit2 ("ldi", "#0x00");
+          cost (1, 1);
+          storeA (result->aop, i);
+        }
+    }
+
+  if (pushed)
+    adjustStack (pushed);
+  if (raop != right->aop && raop != &tmp)
+    Safe_free (raop);
+release:
   freeAsmop (left);
   freeAsmop (right);
   freeAsmop (result);
@@ -4035,6 +4349,11 @@ genNativeA (const iCode *ic)
     case '*':
       return (!surv && (getSize (operandType (result)) == 1 ? !(l && r) : !l && !r));
 
+    case '/':
+    case '%':
+      /* the dividend goes into IX / RA first; a divisor in A would be gone by then */
+      return (!surv && !r);
+
     case '!':
       return (!surv);
 
@@ -4210,7 +4529,7 @@ genLisaiCodeOp (iCode *ic)
 
     case '/':
     case '%':
-      wassertl (0, "Unimplemented iCode: division (should be a library call)");
+      genDivMod (ic);
       break;
 
     case '>':
@@ -4350,7 +4669,14 @@ lineWords (const lineNode *pl)
       while (q < p + len && isspace ((unsigned char) *q))
         q++;
       if (q < p + len && *q != ';' && *q != '.' && !(p[len - 1] == ':' && !strchr (q, '\t')))
-        words += !strncmp (q, "ldx", 3) ? 2 : 1;
+        {
+          /* two words: ldx, lddiv, and div / rem with a stack operand */
+          if (!strncmp (q, "ldx", 3) && strncmp (q, "ldxx", 4) || !strncmp (q, "lddiv", 5) ||
+              (!strncmp (q, "div", 3) || !strncmp (q, "rem", 3)) && memchr (q, ',', len - (q - p)))
+            words += 2;
+          else
+            words += 1;
+        }
       p = e ? e + 1 : p + len;
     }
   return words;
