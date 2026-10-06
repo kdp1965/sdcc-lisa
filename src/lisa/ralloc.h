@@ -45,5 +45,6 @@ extern reg_info lisa_regs[];
 
 void lisa_assignRegisters (ebbIndex *);
 void lisaSpillThis (symbol *sym);
+iCode *lisa_ralloc2_cc (ebbIndex *ebbi);
 
 #endif

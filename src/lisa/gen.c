@@ -46,7 +46,7 @@ static bool regalloc_dry_run;
 static unsigned int regalloc_dry_run_cost_words;
 static float regalloc_dry_run_cost_cycles;
 
-static struct
+static struct genState
 {
   struct
     {
@@ -149,6 +149,25 @@ static void
 ixInvalidate (void)
 {
   G.ix.type = AOP_INVALID;
+}
+
+/* Is the register free after this iCode (its content neither used later
+   nor the result)?  From the allocator's rSurv. */
+static bool
+regDead (int idx, const iCode *ic)
+{
+  wassert (idx == A_IDX);
+  return (!bitVectBitValue (ic->rSurv, idx));
+}
+
+/* Is this operand a one-byte temporary that the allocator put in A? */
+static bool
+opInA (const operand *op)
+{
+  if (!op || !IS_SYMOP (op) || !IS_ITEMP (op))
+    return (false);
+  const symbol *sym = OP_SYMBOL_CONST (op);
+  return (getSize (sym->type) == 1 && sym->regs[0] == lisa_regs + A_IDX);
 }
 
 static void
@@ -669,6 +688,17 @@ aopOp (operand *op, const iCode *ic)
         aop->aopu.bytes[i].in_reg = !!sym->regs[i];
         if (sym->regs[i])
           aop->aopu.bytes[i].byteu.reg = sym->regs[i];
+        else if (regalloc_dry_run && sym->nRegs)
+          {
+            /* not (yet) in a register: it will get a stack slot */
+            aop->type = AOP_STK;
+            for (int j = 0; j < aop->size && j < 8; j++)
+              {
+                aop->aopu.bytes[j].in_reg = false;
+                aop->aopu.bytes[j].byteu.stk = 1 + j;
+              }
+            return;
+          }
         else
           {
             aop->type = AOP_DUMMY;
@@ -955,6 +985,9 @@ emitAluA (const char *op, const asmop *aop, int offset)
       cost (1, 1);
       return;
     }
+  /* a byte in A cannot be an operand of itself: the generators order the
+     loads so that A is read first, or park it on the stack */
+  wassertl_bt (aop->type != AOP_REG, "A-resident operand as the memory operand of an ALU instruction");
   /* SFR, CODE, STL: put the byte on the stack (swap gets the old A back) */
   emit2 ("push", "a");
   G.stack.pushed++;
@@ -1058,11 +1091,18 @@ isUnsignedOp (const operand *op)
   return (IS_PTR (t) || !IS_SPEC (t) || SPEC_USIGN (t));
 }
 
-/* Set A to the OR of all bytes of aop (Z then tells if it is zero). */
+/* Set A to the OR of all bytes of aop (Z then tells if it is zero).  A
+   byte that is in A already needs an explicit test: whatever set the
+   flags last (a compare, a swap) need not have been its load. */
 static void
 loadOrBytes (const asmop *aop, int size)
 {
   loadA (aop, 0);
+  if (aop->type == AOP_REG && size <= 1)
+    {
+      emit2 ("cpi", "#0x00");
+      cost (1, 1);
+    }
   for (int i = 1; i < size; i++)
     emitAluA ("or", aop, i);
 }
@@ -1133,8 +1173,9 @@ functionClobbersRA (const iCode *ic)
   return (false);
 }
 
+/* The frame of a function as the prologue leaves it (G.stack, G.ra_saved). */
 static void
-genFunction (iCode *ic)
+setupFrame (const iCode *ic)
 {
   const symbol *sym = OP_SYMBOL_CONST (IC_LEFT (ic));
   sym_link *ftype = operandType (IC_LEFT (ic));
@@ -1145,8 +1186,37 @@ genFunction (iCode *ic)
   G.stack.ret_size = (retsize > 1 || IS_STRUCT (ftype->next)) ? retsize : 0;
   G.stack.param_offset = 1 + G.stack.ret_size;
   G.stack.locals_base = 0;
-  predicated = 0;
+  G.ra_saved = false;
   ixInvalidate ();
+  if (IFFUNC_ISNAKED (ftype))
+    return;
+  G.ra_saved = functionClobbersRA (ic) || IFFUNC_ISISR (ftype);
+  G.stack.pushed = IFFUNC_ISISR (ftype) ? 6 : G.ra_saved ? 2 : 0;
+  G.stack.locals_base = -G.stack.pushed;
+  G.stack.pushed += sym->stack;
+}
+
+/* The register allocator's dry runs happen before the prologue is
+   generated: give them the frame of the function the iCodes belong to. */
+void
+lisaDryRunInit (iCode *ic)
+{
+  for (; ic && ic->op != FUNCTION; ic = ic->next);
+  if (ic)
+    setupFrame (ic);
+}
+
+static void
+genFunction (iCode *ic)
+{
+  const symbol *sym = OP_SYMBOL_CONST (IC_LEFT (ic));
+  sym_link *ftype = operandType (IC_LEFT (ic));
+
+  setupFrame (ic);
+  /* the pushes below count up to what setupFrame computed */
+  G.stack.pushed = 0;
+  G.stack.locals_base = 0;
+  predicated = 0;
 
   /* create the function header */
   emit2 (";", "---------------------------------");
@@ -1157,12 +1227,7 @@ genFunction (iCode *ic)
   if (!regalloc_dry_run)
     genLine.lineCurr->isLabel = 1;
   if (IFFUNC_ISNAKED (ftype))
-    {
-      G.ra_saved = false;
-      return;
-    }
-
-  G.ra_saved = functionClobbersRA (ic) || IFFUNC_ISISR (ftype);
+    return;
 
   /* An interrupt handler saves what the hardware does not: A, IX, RA (the
      vector jal leaves it alone, isr_jump) and cflag_save, the shadow that
@@ -1331,40 +1396,42 @@ genIpush (const iCode *ic)
 
   aopOp (left, ic);
 
+  /* A holds something else that is still needed: push it first and swap
+     the byte in underneath, so that A comes out unchanged */
+  bool keep = !regDead (A_IDX, ic) && !aopInReg (left->aop, 0, A_IDX);
+
   /* bytes are pushed high to low so that the low byte ends at the lowest address */
   for (int i = left->aop->size - 1; i >= 0; i--)
     {
+      if (keep)
+        pushA ();
       if (left->aop->type == AOP_STL)
         {
-          /* the address of a stack object: compute both bytes, push high then low */
+          /* the address of a stack object, as seen after the pushes so far */
           int n = left->aop->aopu.stk_off + G.stack.pushed;
-          if (i == 1)
-            {
-              emit2 ("spix", "");
-              emit2 ("txa", "");
-              emit2 ("ldc", "#0");
-              emit2 ("adc", "#0x%02x", n & 0xff);
-              emit2 ("txau", "");
-              emit2 ("andi", "#0x7f");
-              emit2 ("adc", "#0x%02x", (n >> 8) & 0xff);
-              cost (7, 7);
-              ixInvalidate ();
-              pushA ();
-              continue;
-            }
-          /* i == 0: n changed by the push above */
-          n = left->aop->aopu.stk_off + G.stack.pushed;
           emit2 ("spix", "");
           emit2 ("txa", "");
           emit2 ("ldc", "#0");
           emit2 ("adc", "#0x%02x", n & 0xff);
           cost (4, 4);
+          if (i == 1)
+            {
+              emit2 ("txau", "");
+              emit2 ("andi", "#0x7f");
+              emit2 ("adc", "#0x%02x", (n >> 8) & 0xff);
+              cost (3, 3);
+            }
           ixInvalidate ();
-          pushA ();
-          continue;
         }
-      loadA (left->aop, i);
-      pushA ();
+      else
+        loadA (left->aop, i);
+      if (keep)
+        {
+          emit2 ("swap", "1(sp)");
+          cost (1, 1);
+        }
+      else
+        pushA ();
     }
 
   freeAsmop (left);
@@ -1452,7 +1519,8 @@ genCall (const iCode *ic)
           slot.size = retsize;
           for (int i = 0; i < retsize && i < 8; i++)
             slot.aopu.bytes[i].byteu.stk = 1 - G.stack.pushed + i;   /* 1(sp) .. */
-          genMove_o (IC_RESULT (ic)->aop, 0, &slot, 0, retsize);
+          /* a narrower result (the division support calls): only its bytes */
+          genMove_o (IC_RESULT (ic)->aop, 0, &slot, 0, min (retsize, IC_RESULT (ic)->aop->size));
         }
       freeAsmop (IC_RESULT (ic));
     }
@@ -1597,7 +1665,10 @@ genAddSub (const iCode *ic, bool sub)
 
   asmop *laop = left->aop, *raop = right->aop;
 
-  if (!sub && (laop->type == AOP_LIT || laop->type == AOP_IMMD) && raop->type != AOP_LIT && raop->type != AOP_IMMD)
+  /* addition: literals on the right, and a byte in A on the left so that
+     it is the one loaded (a no-op) first */
+  if (!sub && (laop->type == AOP_LIT || laop->type == AOP_IMMD) && raop->type != AOP_LIT && raop->type != AOP_IMMD ||
+      !sub && raop->type == AOP_REG && laop->type != AOP_REG)
     {
       asmop *t = laop; laop = raop; raop = t;
     }
@@ -1967,9 +2038,11 @@ genBitwise (const iCode *ic, const char *op, iCode *ifx)
   size = result->aop->type == AOP_CND ? max (left->aop->size, right->aop->size) : result->aop->size;
 
   asmop *laop = left->aop, *raop = right->aop;
-  /* literals on the right (andi), else memory on the right */
+  /* literals on the right (andi), else memory on the right; a byte in A
+     on the left, where loading it is a no-op */
   if (laop->type == AOP_LIT || laop->type == AOP_IMMD ||
-      raop->type != AOP_LIT && raop->type != AOP_IMMD && !aopIsMem (raop, 0) && aopIsMem (laop, 0))
+      raop->type != AOP_LIT && raop->type != AOP_IMMD && !aopIsMem (raop, 0) && aopIsMem (laop, 0) ||
+      raop->type == AOP_REG && laop->type != AOP_REG)
     {
       asmop *t = laop; laop = raop; raop = t;
     }
@@ -2026,7 +2099,7 @@ genBitwise (const iCode *ic, const char *op, iCode *ifx)
               cheapMove (result->aop, i, laop, i);
               continue;
             }
-          if (!strcmp (op, "xor") && b == 0xff)
+          if (!strcmp (op, "xor") && b == 0xff && laop->type != AOP_REG)
             {
               emit2 ("ldi", "#0xff");
               cost (1, 1);
@@ -2163,8 +2236,12 @@ genCmp (const iCode *ic, iCode *ifx)
   size = max (left->aop->size, right->aop->size);
 
   asmop *laop = left->aop, *raop = right->aop;
-  /* the literal (if any) on the right: swap and flip the relation */
-  if ((laop->type == AOP_LIT || laop->type == AOP_IMMD) && raop->type != AOP_LIT && raop->type != AOP_IMMD)
+  /* the literal (if any) on the right: swap and flip the relation.  A byte
+     in A compared with memory goes to the right, where cmpByteFlags
+     pushes it before loading the left (against a literal it stays left,
+     cpi reads A as it is). */
+  if ((laop->type == AOP_LIT || laop->type == AOP_IMMD) && raop->type != AOP_LIT && raop->type != AOP_IMMD ||
+      laop->type == AOP_REG && raop->type != AOP_LIT && raop->type != AOP_IMMD && raop->type != AOP_REG)
     {
       asmop *t = laop; laop = raop; raop = t;
       lt = !lt;
@@ -2327,7 +2404,9 @@ genCmpEQorNE (const iCode *ic, iCode *ifx)
   size = max (left->aop->size, right->aop->size);
 
   asmop *laop = left->aop, *raop = right->aop;
-  if (laop->type == AOP_LIT || laop->type == AOP_IMMD)
+  /* literals on the right; a byte in A on the left (loading it is a no-op) */
+  if (laop->type == AOP_LIT || laop->type == AOP_IMMD ||
+      raop->type == AOP_REG && laop->type != AOP_REG)
     {
       asmop *t = laop; laop = raop; raop = t;
     }
@@ -2708,8 +2787,9 @@ genMult (const iCode *ic)
   int size = result->aop->size;
   asmop *laop = left->aop, *raop = right->aop;
 
-  /* mul needs a memory operand: literals on the right */
-  if (laop->type == AOP_LIT || laop->type == AOP_IMMD || !aopIsMem (raop, 0) && aopIsMem (laop, 0))
+  /* mul needs a memory operand: literals on the right; a byte in A on the left */
+  if (laop->type == AOP_LIT || laop->type == AOP_IMMD || !aopIsMem (raop, 0) && aopIsMem (laop, 0) ||
+      raop->type == AOP_REG && laop->type != AOP_REG)
     {
       asmop *t = laop; laop = raop; raop = t;
     }
@@ -2969,6 +3049,23 @@ ixLoadPtr (const asmop *aop)
       emit2 ("taxu", "");
       cost (2, 2);
       ixInvalidate ();
+    }
+}
+
+/* Would ixLoadPtr go through A (tax / taxu) for this pointer? */
+static bool
+ixLoadPtrClobbersA (const asmop *aop)
+{
+  switch (aop->type)
+    {
+    case AOP_IMMD:
+    case AOP_LIT:
+    case AOP_STL:
+      return (false);
+    case AOP_STK:
+      return (stkIsFar (aop, 0) || stkIsFar (aop, 1));
+    default:
+      return (true);
     }
 }
 
@@ -3548,7 +3645,15 @@ genPointerSet (iCode *ic)
       goto release;
     }
 
-  ixLoadPtr (left->aop);
+  /* the value in A: keep it while the pointer goes through A into IX */
+  if (aopInReg (right->aop, 0, A_IDX) && ixLoadPtrClobbersA (left->aop))
+    {
+      pushA ();
+      ixLoadPtr (left->aop);
+      popA ();
+    }
+  else
+    ixLoadPtr (left->aop);
   for (int i = 0; i < size; i++)
     {
       loadA (right->aop, i);
@@ -3832,6 +3937,172 @@ resultRemat (const iCode *ic)
 }
 
 /*-----------------------------------------------------------------*/
+/* A as a register.  The generators take their operands from memory  */
+/* and use A as scratch: each loads its first operand with loadA (a  */
+/* no-op for a byte that is in A already) and stores its result with */
+/* storeA (likewise).  genNativeA says whether that is enough for    */
+/* the operand placement of an iCode, including whether A has to     */
+/* come out unchanged (the allocator keeps another live byte in it); */
+/* where it is not, genLisaiCode parks A on the stack around the     */
+/* generator and lets it work on that stack byte instead.            */
+/*-----------------------------------------------------------------*/
+
+/* The operands of an iCode that could be a one-byte temporary in A. */
+static void
+icOperands (const iCode *ic, operand **left, operand **right, operand **result)
+{
+  *left = *right = *result = NULL;
+  switch (ic->op)
+    {
+    case IFX:
+      *left = IC_COND (ic);
+      break;
+    case JUMPTABLE:
+      *left = IC_JTCOND (ic);
+      break;
+    case LABEL:
+    case GOTO:
+    case FUNCTION:
+    case ENDFUNCTION:
+    case INLINEASM:
+    case CRITICAL:
+    case ENDCRITICAL:
+      break;
+    case RETURN:
+    case IPUSH:
+    case IPUSH_VALUE_AT_ADDRESS:
+    case SET_VALUE_AT_ADDRESS:
+    case DUMMY_READ_VOLATILE:
+      *left = IC_LEFT (ic);
+      *right = IC_RIGHT (ic);
+      break;
+    default:
+      *left = IC_LEFT (ic);
+      *right = IC_RIGHT (ic);
+      *result = IC_RESULT (ic);
+    }
+}
+
+static bool
+genNativeA (const iCode *ic)
+{
+  operand *left, *right, *result;
+  icOperands (ic, &left, &right, &result);
+  bool l = opInA (left), r = opInA (right);
+  bool surv = !regDead (A_IDX, ic);    /* A must come out unchanged */
+
+  switch (ic->op)
+    {
+    /* no scratch use of A, or the branch / call / push sequences that
+       cannot be wrapped: the allocator only places a byte in A where
+       these generators can take it */
+    case LABEL:
+    case GOTO:
+    case FUNCTION:
+    case ENDFUNCTION:
+    case INLINEASM:
+    case CRITICAL:
+    case ENDCRITICAL:
+    case IFX:
+    case JUMPTABLE:
+    case RETURN:
+    case IPUSH:
+    case IPUSH_VALUE_AT_ADDRESS:
+    case CALL:
+    case PCALL:
+      return (true);
+
+    case '=':
+      /* the byte in A goes out first; the zero extension of a wider result clobbers A */
+      return (!surv || r && getSize (operandType (result)) == 1);
+
+    case CAST:
+      {
+        sym_link *restype = operandType (result);
+        bool clobbers = IS_BOOL (operandType (IC_LEFT (ic))) || IS_BOOL (restype) ||
+                        getSize (restype) > getSize (operandType (right)) ||
+                        IS_BITINT (restype) && (SPEC_BITINTWIDTH (restype) % 8);
+        return (!surv || r && !clobbers);
+      }
+
+    case '+':
+      return (!surv && !(l && r));
+
+    case '-':
+      /* a multi-byte subtraction tests the right byte (cpi #1) before loading the left one */
+      return (!surv && !(l && r) && !(l && getSize (operandType (result)) > 1 && !IS_OP_LITERAL (right)));
+
+    case '*':
+      return (!surv && (getSize (operandType (result)) == 1 ? !(l && r) : !l && !r));
+
+    case '!':
+      return (!surv);
+
+    case '~':
+    case UNARYMINUS:
+      /* 0xff - x, x as the memory operand */
+      return (!surv && !l);
+
+    case '^':
+    case '|':
+    case BITWISEAND:
+    case EQ_OP:
+    case NE_OP:
+      /* fused with an ifx: the allocator has made sure of the placement */
+      return (!surv && !(l && r) || IS_ITEMP (result) && OP_SYMBOL_CONST (result)->regType == REG_CND);
+
+    case '<':
+    case '>':
+      {
+        if (IS_ITEMP (result) && OP_SYMBOL_CONST (result)->regType == REG_CND)
+          return (true);
+        if (!l && !r)
+          return (!surv);
+        if (surv || l && r)
+          return (false);
+        /* the single-byte sequences: against a literal, or unsigned */
+        const operand *other = l ? right : left;
+        return (getSize (operandType (left)) == 1 && getSize (operandType (right)) == 1 &&
+                (IS_OP_LITERAL (other) || isUnsignedOp (left) || isUnsignedOp (right)));
+      }
+
+    case LEFT_OP:
+    case RIGHT_OP:
+      if (surv)
+        return (false);
+      if (IS_OP_LITERAL (right))
+        return (!l || getSize (operandType (result)) == 1);
+      /* a variable count is read into A first, then the result is shifted in place */
+      return (!l && !opInA (result));
+
+    case SET_VALUE_AT_ADDRESS:
+      {
+        sym_link *btype = operandType (left)->next;
+        if (btype && IS_BITVAR (btype) && SPEC_BLEN (btype) % 8)
+          return (!surv && !r);
+        return (!surv || r);
+      }
+
+    default:
+      return (!surv);
+    }
+}
+
+/* The operand's byte is the one A was pushed to, at entry-relative stack offset stk. */
+static void
+parkOperand (operand *op, int stk)
+{
+  if (op->aop)
+    return;
+  asmop *aop = newAsmop (AOP_STK);
+  aop->size = 1;
+  aop->aopu.bytes[0].byteu.stk = stk;
+  op->aop = aop;
+}
+
+static void genLisaiCodeOp (iCode *ic);
+
+/*-----------------------------------------------------------------*/
 /* genLisaiCode - generate code for LISA based on the iCode        */
 /*-----------------------------------------------------------------*/
 static void
@@ -3852,6 +4123,32 @@ genLisaiCode (iCode *ic)
       return;
     }
 
+  operand *left, *right, *result;
+  icOperands (ic, &left, &right, &result);
+  bool l = opInA (left), r = opInA (right), res = opInA (result);
+
+  if ((l || r || res || !regDead (A_IDX, ic)) && !genNativeA (ic))
+    {
+      D (emit2 ("; A parked", ""));
+      pushA ();
+      int stk = 1 - G.stack.pushed;
+      if (l)
+        parkOperand (left, stk);
+      if (r)
+        parkOperand (right, stk);
+      if (res)
+        parkOperand (result, stk);
+      genLisaiCodeOp (ic);
+      popA ();
+      return;
+    }
+
+  genLisaiCodeOp (ic);
+}
+
+static void
+genLisaiCodeOp (iCode *ic)
+{
   switch (ic->op)
     {
     case '!':
@@ -4182,6 +4479,35 @@ relaxBranches (lineNode *head)
     }
   while (changed && ++iterations < 8);
   Safe_free (labels);
+}
+
+/*-----------------------------------------------------------------*/
+/* dryLisaiCode - the cost of an iCode for the register allocator: */
+/* generate it without emitting, with the operands placed as the   */
+/* allocator is considering.  The generator state is put back      */
+/* afterwards (an isolated call drops arguments it never pushed).  */
+/*-----------------------------------------------------------------*/
+float
+dryLisaiCode (iCode *ic)
+{
+  struct genState saved = G;
+
+  regalloc_dry_run = true;
+  regalloc_dry_run_cost_words = 0;
+  regalloc_dry_run_cost_cycles = 0;
+
+  initGenLineElement ();
+  ixInvalidate ();
+
+  genLisaiCode (ic);
+
+  G = saved;
+  destroy_line_list ();
+  regalloc_dry_run = false;
+
+  const unsigned int word_cost_weight = 2 << (optimize.codeSize * 3 + !optimize.codeSpeed * 3);
+
+  return (regalloc_dry_run_cost_words * word_cost_weight + regalloc_dry_run_cost_cycles * ic->count);
 }
 
 /*-----------------------------------------------------------------*/

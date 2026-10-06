@@ -62,6 +62,11 @@ build/bin/sdcc -mlisa -o prog.ihx prog.c          # Intel HEX, byte addresses = 
   objects are laid out nearest SP and bytes beyond the reach are addressed
   through an IX window (`spix`, chained `adx`, `n(ix)`; SP never moves, so
   interrupts are safe), so frames are limited only by RAM.
+* Registers: one-byte temporaries are kept in A where the register
+  allocator (`src/lisa/ralloc2.cc`, SDCC's tree-decomposition allocator
+  with a dry-run cost model) finds it cheaper; everything else lives on
+  the stack.  `LISA_NO_RALLOC=1` in the environment spills everything,
+  for comparing code.
 * Code-space constants: `const` globals live in code space as `ldi/ret`
   pairs (two words per byte); a pointer to them is the pair index with bit
   15 set, which is what the generic-pointer code tests at run time.
@@ -148,7 +153,7 @@ The smaller, chip-sized suite is `../sdcc_test` (`make check`); its
 
 | what | where |
 |---|---|
-| compiler back end | `src/lisa/{main.c,gen.c,ralloc.c,peeph.def}` |
+| compiler back end | `src/lisa/{main.c,gen.c,ralloc.c,ralloc2.cc,peeph.def}` (`ralloc2.cc`: A for one-byte temporaries, tree-decomposition allocator with dry-run costs) |
 | assembler | `sdas/aslisa/{lisa.h,lisaadr.c,lisamch.c,lisapst.c}`, data-in-code expansion in `sdas/asxxsrc/asout.c`, `.p` suffix in `asmain.c` |
 | linker | `sdas/linksrc/lkrloc3.c` (LISA relocation rules), `lkarea.c` (code/data spaces, CDATA alignment, `s_<area>` symbols) |
 | library | `device/lib/lisa/{Makefile.in,setjmp.s,atomic_flag_test_and_set.s,heap.s}`, `device/include/lisa/tt07.h` (peripherals, interrupts), `device/include/stdarg.h`, `setjmp.h`, `stdatomic.h` |

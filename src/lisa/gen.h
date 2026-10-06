@@ -82,6 +82,8 @@ typedef struct asmop
 asmop;
 
 void genLisaCode (iCode *);
+float dryLisaiCode (iCode *ic);
+void lisaDryRunInit (iCode *ic);
 bool lisaNotUsed (const char *what, lineNode *endPl, lineNode *head);
 void lisa_emitDebuggerSymbol (const char *);
 void lisa_init_asmops (void);

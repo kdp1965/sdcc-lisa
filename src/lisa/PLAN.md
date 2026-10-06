@@ -97,10 +97,21 @@ asxxxx target with lisa_as-compatible syntax so existing `.S` sources port easil
   `genIVT`, `genInitStartup` (copies `INITIALIZER` -> `INITIALIZED` with
   `call ix` pairs, zeroes nothing else: SDCC zeroes DATA in `__sdcc_init`... use
   the stm8 pattern: `___sdcc_init_data` loop).
-* `ralloc.c`: no allocatable registers in the first cut — every variable and
-  iTemp is spilled to the stack (`AOP_STK`) or lives in DATA.  Second cut: keep
-  an iTemp in `A` when its only use is the next iCode (the z80 "surviving in A"
-  idea), which removes most `stax t ; ldax t` pairs.
+* `ralloc.c` / `ralloc2.cc`: `A` is the one allocatable register, for
+  one-byte temporaries, assigned by the tree-decomposition allocator of
+  `SDCCralloc.hpp` with the pdk-style dry-run cost model (`dryLisaiCode`
+  generates an iCode without emitting and returns its cost).  Everything
+  else is spilled to the stack (`AOP_STK`) or lives in DATA.  The
+  generators load their first operand with `loadA` and store the result
+  with `storeA`, both no-ops for a byte in A; `genNativeA` says when that
+  placement is enough, otherwise `genLisaiCode` parks A on the stack
+  around the generator (`push a` / `pop a`, the operand becomes that stack
+  byte).  Only branches, calls and pushes cannot be wrapped that way, so
+  `Ainst_ok` in `ralloc2.cc` rules out a live A across them unless the
+  generator keeps it (`bz`/`bnz` on A, `cpi`, the push-and-swap of
+  `genIpush`).  A byte that is in A already is tested with `cpi #0` before
+  a `bz`: the last flag write need not have been its load.
+  `LISA_NO_RALLOC=1` in the environment spills everything (for comparing).
 * `gen.c`: asmop types LIT, STK (`n(sp)`), DIR (`sta/lda abs9` for low data and
   sfrs), IMMD (symbol address), CODE (const data), A.  Byte-wise codegen for
   everything wider than 8 bits, `C` chained through `add`/`sub`/`adc`.
@@ -126,8 +137,9 @@ Verified on the C++ simulator: 44 self-checking cases (8/16/32-bit
 arithmetic, signed/unsigned compares, shifts, mul, div/mod via the library,
 pointers into RAM and into constant data, generic pointers, function
 pointers, switch jump tables, initialized globals, unions, varargs,
-printf with %d %u %x %ld %c %s and widths).  Everything lives on the stack;
-A is scratch; frames are packed by block scope and spill slots are shared
+printf with %d %u %x %ld %c %s and widths).  Everything but one-byte
+temporaries that the allocator keeps in A lives on the stack;
+frames are packed by block scope and spill slots are shared
 between non-overlapping temporaries.  Branches out of the +-1024-word range
 are relaxed after the peephole pass.  Instructions after `if/iftt/ifte`
 are emitted with a `.p` suffix so peephole rules leave them alone.
@@ -176,10 +188,15 @@ chained `adx`, `n(ix)`; the IX tracker keeps the base, loads and stores
 that must keep IX wrap it in `push ix`/`pop ix`); SP never moves, so this
 is interrupt-safe, unlike an `ads` window would be.
 
+The A allocator (2026-10-06): one-byte temporaries go to A where the
+tree-decomposition allocator finds it cheaper (about 4% less code on the
+library and the test programs; most `stax t ; ldax t` pairs are gone).
+Bugs it shook out: a call returning int into a one-byte result (the 8-bit
+division helpers) loaded the high byte of the return slot after the low
+byte, and an ifx on a byte in A took Z from an earlier `cpi` on it.
+
 Not done / next:
-* Code quality: keep short-lived temporaries in A (the pdk-style
-  tree-decomposition allocator with a dry-run cost model is the plan;
-  `emit2`/`cost` are already structured for it), more peepholes
+* Code quality: more peepholes
   (`ldax x; stax x`, `ldi 0; stax a; ldi 0; stax b`, compare-then-branch
   fusion), `shl16/shr16` for 16-bit shifts at 0..3(sp), hardware `div`/`rem`.
 * Bit fields, `ROT`, `GETWORD`, `IPUSH_VALUE_AT_ADDRESS` (struct

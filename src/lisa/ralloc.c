@@ -589,9 +589,15 @@ serialRegMark (eBBlock **ebbs, int count)
                   sym->isspilt = false;
                 }
 
-              /* no register allocation yet: everything lives on the stack */
-              sym->for_newralloc = 0;
-              lisaSpillThis (sym);
+              /* one-byte temporaries go to the allocator (A); the rest
+                 lives on the stack (LISA_NO_RALLOC: everything does) */
+              if (sym->nRegs == 1 && !sym->remat && !getenv ("LISA_NO_RALLOC"))
+                sym->for_newralloc = 1;
+              else
+                {
+                  sym->for_newralloc = 0;
+                  lisaSpillThis (sym);
+                }
             }
         }
     }
@@ -689,8 +695,11 @@ lisa_assignRegisters (ebbIndex *ebbi)
      registers & the type of registers required for each */
   regTypeNum ();
 
-  /* Spill everything (no register allocation yet) */
+  /* Mark the one-byte temporaries for the allocator, spill the rest */
   serialRegMark (ebbs, count);
+
+  /* A for the marked ones, where it pays */
+  ic = lisa_ralloc2_cc (ebbi);
   lisaRegFix (ebbs, count);
 
   /* redo the offsets for stacked automatic variables: variables of
@@ -703,8 +712,6 @@ lisa_assignRegisters (ebbIndex *ebbi)
   if (getenv ("LISA_DEBUG_STACK"))
     for (symbol *sym = setFirstItem (istack->syms); sym; sym = setNextItem (istack->syms))
       fprintf (stderr, "stk %s block %d level %ld stack %d size %d allocreq %d live %d-%d\n", sym->name, sym->block, (long) sym->level, sym->stack, getSize (sym->type), sym->allocreq, sym->liveFrom, sym->liveTo);
-
-  ic = iCodeLabelOptimize (iCodeFromeBBlock (ebbs, count));
 
   if (options.dump_i_code)
     {
