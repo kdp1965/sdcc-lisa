@@ -69,13 +69,13 @@ LISA_SDCC = $(COMMON_SDCC) \
 LISASOURCES = $(addprefix ../,$(LISA_FLOAT) $(LISA_INT) $(LISA_LONG) $(LISA_LONGLONG) $(LISA_SDCC))
 LISAOBJECTS = $(patsubst %.c,%.rel,$(LISA_FLOAT) $(LISA_INT) $(LISA_LONG) $(LISA_LONGLONG) $(LISA_SDCC))
 
-OBJ = setjmp.rel atomic_flag_test_and_set.rel heap.rel divu.rel bf16.rel bf16c.rel
+OBJ = setjmp.rel atomic_flag_test_and_set.rel heap.rel divu.rel bf16.rel bf16add.rel bf16c.rel
 
 LIB = lisa.lib
 # --bf16-float: the float support routines on the bfloat16 unit, linked
 # ahead of lisa.lib
 LIB2 = bf16float.lib
-OBJ2 = bf16fs.rel
+OBJ2 = bf16fs.rel bf16fsc.rel
 AS = $(SAS)
 ASFLAGS = -plosgff
 
@@ -97,7 +97,7 @@ else
 	rm -f $@
 	for i in $(basename $(OBJ2)); do echo $$i >>$@; done
 	cp $(OBJ2) $(PORTDIR)
-	# --bf16-float links bf16fs.rel as an object: the linker's listing update (-u) wants its .lst beside it
+	# --bf16-float links these as objects: the linker's listing update (-u) wants the .lst beside each
 	cp $(OBJ2:.rel=.lst) $(PORTDIR)
     endif
   endif

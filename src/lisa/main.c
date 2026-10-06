@@ -241,10 +241,10 @@ lisa_reg_parm (sym_link *l, bool reentrant)
 /* --bf16-float: float arithmetic on the core's bfloat16 unit.  The type
    keeps its 32-bit storage and calling convention; __fsadd / __fssub /
    __fsmul / __fsdiv and the 8- and 16-bit integer conversions come from
-   bf16fs.rel (device/lib/lisa/bf16fs.c), which is linked as an object
-   ahead of the libraries so that lisa.lib's generic ones are never looked
-   for, and round every result to bf16 (8-bit mantissa).  __SDCC_BF16_FLOAT
-   is defined for the source. */
+   bf16fs.rel / bf16fsc.rel (device/lib/lisa/bf16fs.s, bf16fsc.c), linked
+   as objects ahead of the libraries so that lisa.lib's generic ones are
+   never looked for, and round every result to bf16 (8-bit mantissa).
+   __SDCC_BF16_FLOAT is defined for the source. */
 #define OPTION_BF16_FLOAT "--bf16-float"
 
 static OPTION lisa_options[] = {
@@ -275,19 +275,25 @@ lisa_finaliseOptions (void)
       addSet (&preArgvSet, Safe_strdup ("-D__SDCC_BF16_FLOAT"));
       if (!options.nostdlib)
         {
-          /* the object in the first library directory that has it */
+          /* the objects, from the first library directory that has them */
+          static const char *const objs[] = { "bf16fs.rel", "bf16fsc.rel", NULL };
           const char *dir;
           bool found = false;
-          for (dir = setFirstItem (libDirsSet); dir; dir = setNextItem (libDirsSet))
+          for (dir = setFirstItem (libDirsSet); dir && !found; dir = setNextItem (libDirsSet))
             {
               struct dbuf_s dbuf;
               dbuf_init (&dbuf, PATH_MAX);
-              dbuf_printf (&dbuf, "%s%cbf16fs.rel", dir, DIR_SEPARATOR_CHAR);
+              dbuf_printf (&dbuf, "%s%c%s", dir, DIR_SEPARATOR_CHAR, objs[0]);
               if (pathExists (dbuf_c_str (&dbuf)))
                 {
-                  addSet (&relFilesSet, dbuf_detach_c_str (&dbuf));
+                  for (const char *const *o = objs; *o; o++)
+                    {
+                      struct dbuf_s dbuf2;
+                      dbuf_init (&dbuf2, PATH_MAX);
+                      dbuf_printf (&dbuf2, "%s%c%s", dir, DIR_SEPARATOR_CHAR, *o);
+                      addSet (&relFilesSet, dbuf_detach_c_str (&dbuf2));
+                    }
                   found = true;
-                  break;
                 }
               dbuf_destroy (&dbuf);
             }

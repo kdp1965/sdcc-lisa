@@ -1,6 +1,7 @@
 /*-------------------------------------------------------------------------
-   bf16fs.c - the float support routines on the bfloat16 unit, for
-              sdcc -mlisa --bf16-float (bf16float.lib)
+   bf16fsc.c - the integer conversions of the float support on the
+               bfloat16 unit, for sdcc -mlisa --bf16-float (the arithmetic
+               is bf16fs.s)
 
    A float keeps its 32-bit storage and calling convention, but every
    arithmetic result is rounded to bfloat16 (8 significant bits, the
@@ -51,25 +52,7 @@ static bf16_t trunc16(float f)
   return (bf16_t)(v.u >> 16);
 }
 
-float __fsadd(float a, float b)
-{
-  return bf16_to_float(bf16_add(bf16_from_float(a), bf16_from_float(b)));
-}
-
-float __fssub(float a, float b)
-{
-  return bf16_to_float(bf16_sub(bf16_from_float(a), bf16_from_float(b)));
-}
-
-float __fsmul(float a, float b)
-{
-  return bf16_to_float(bf16_mul(bf16_from_float(a), bf16_from_float(b)));
-}
-
-float __fsdiv(float a, float b)
-{
-  return bf16_to_float(bf16_div(bf16_from_float(a), bf16_from_float(b)));
-}
+/* __fsadd, __fssub, __fsmul and __fsdiv are bf16fs.s */
 
 float __sint2fs(signed int x)
 {

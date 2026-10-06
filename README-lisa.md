@@ -85,10 +85,11 @@ build/bin/sdcc -mlisa -o prog.ihx prog.c          # Intel HEX, byte addresses = 
   `device/lib/lisa/bf16fs.c` (linked ahead of `lisa.lib`; it defines
   `__SDCC_BF16_FLOAT`), every result is rounded to bf16 (8 significant
   bits, about 2.4 decimal digits) and stored as a float with a zero low
-  half, and the comparisons and `long` conversions stay exact.  Multiply,
-  divide and the conversions are 5-7x faster than the software float
-  library on the simulator, addition 1.3x (it is the software bf16_add).
-  Code built with and without the option must not be mixed in one link.
+  half, and the comparisons and `long` conversions stay exact.  On the
+  simulator an addition takes 240 cycles against 1080 for the software
+  float library, a multiplication 100 against 2000, a division 100
+  against 2850, the integer conversions 150 against 700-870.  Code built
+  with and without the option must not be mixed in one link.
 * Registers: one-byte temporaries are kept in A where the register
   allocator (`src/lisa/ralloc2.cc`, SDCC's tree-decomposition allocator
   with a dry-run cost model) finds it cheaper; everything else lives on
@@ -183,6 +184,6 @@ The smaller, chip-sized suite is `../sdcc_test` (`make check`); its
 | compiler back end | `src/lisa/{main.c,gen.c,ralloc.c,ralloc2.cc,peeph.def}` (`ralloc2.cc`: A for one-byte temporaries, tree-decomposition allocator with dry-run costs) |
 | assembler | `sdas/aslisa/{lisa.h,lisaadr.c,lisamch.c,lisapst.c}`, data-in-code expansion in `sdas/asxxsrc/asout.c`, `.p` suffix in `asmain.c` |
 | linker | `sdas/linksrc/lkrloc3.c` (LISA relocation rules), `lkarea.c` (code/data spaces, CDATA alignment, `s_<area>` symbols) |
-| library | `device/lib/lisa/{Makefile.in,setjmp.s,atomic_flag_test_and_set.s,heap.s,divu.s,bf16.s,bf16c.c}`, `device/include/lisa/tt07.h` (peripherals, interrupts), `device/include/lisa/bf16.h` (the FPU), `device/include/stdarg.h`, `setjmp.h`, `stdatomic.h` |
+| library | `device/lib/lisa/{Makefile.in,setjmp.s,atomic_flag_test_and_set.s,heap.s,divu.s,bf16.s,bf16add.s,bf16c.c,bf16fs.s,bf16fsc.c}`, `device/include/lisa/tt07.h` (peripherals, interrupts), `device/include/lisa/bf16.h` (the FPU), `device/include/stdarg.h`, `setjmp.h`, `stdatomic.h` |
 | regression port | `support/regression/ports/lisa/{spec.mk,support.c}`, `fwk/include/testfwk.h` (`__SDCC_lisa`), LISA addresses in `tests/bitfields-*.c.in`, `tests/absolute.c.in` |
 | generic hooks | `src/SDCCglue.c` (program startup jumps, sfr table, FDATA), `src/SDCCsymt.c` (8-bit div/mod helpers return int; `__at` objects stay in data), `src/SDCCmem.c` (big objects to FDATA), `src/SDCCval.c` (code-pointer offset scaling), `src/port.h`, `src/SDCCmain.c`, `configure.ac`, `Makefile.in`, `device/lib/Makefile.in`, `device/lib/malloc.c` (lazy heap init) |
