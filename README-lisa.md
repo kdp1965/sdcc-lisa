@@ -79,7 +79,16 @@ build/bin/sdcc -mlisa -o prog.ihx prog.c          # Intel HEX, byte addresses = 
   `bf16_from_uint`/`bf16_to_uint` on the hardware, `bf16_add`/`bf16_sub`
   in software (the silicon's adder is defective, see the BF16 notes in
   `lisa_isa.md`), and `bf16_from_float`/`bf16_to_float` to and from the
-  32-bit `float`.  The C type `float` itself stays the software one.
+  32-bit `float`.  The C type `float` itself stays the software one -
+  unless compiled with `--bf16-float`: then `__fsadd`/`__fssub`/
+  `__fsmul`/`__fsdiv` and the 8- and 16-bit integer conversions come from
+  `device/lib/lisa/bf16fs.c` (linked ahead of `lisa.lib`; it defines
+  `__SDCC_BF16_FLOAT`), every result is rounded to bf16 (8 significant
+  bits, about 2.4 decimal digits) and stored as a float with a zero low
+  half, and the comparisons and `long` conversions stay exact.  Multiply,
+  divide and the conversions are 5-7x faster than the software float
+  library on the simulator, addition 1.3x (it is the software bf16_add).
+  Code built with and without the option must not be mixed in one link.
 * Registers: one-byte temporaries are kept in A where the register
   allocator (`src/lisa/ralloc2.cc`, SDCC's tree-decomposition allocator
   with a dry-run cost model) finds it cheaper; everything else lives on

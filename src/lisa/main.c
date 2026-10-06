@@ -238,9 +238,30 @@ lisa_reg_parm (sym_link *l, bool reentrant)
   return (0);
 }
 
+/* --bf16-float: float arithmetic on the core's bfloat16 unit.  The type
+   keeps its 32-bit storage and calling convention; __fsadd / __fssub /
+   __fsmul / __fsdiv and the 8- and 16-bit integer conversions come from
+   bf16fs.rel (device/lib/lisa/bf16fs.c), which is linked as an object
+   ahead of the libraries so that lisa.lib's generic ones are never looked
+   for, and round every result to bf16 (8-bit mantissa).  __SDCC_BF16_FLOAT
+   is defined for the source. */
+#define OPTION_BF16_FLOAT "--bf16-float"
+
+static OPTION lisa_options[] = {
+  {0, OPTION_BF16_FLOAT, NULL, "float arithmetic on the bfloat16 unit (8-bit mantissa, see README-lisa.md)"},
+  {0, NULL}
+};
+
+static bool lisa_bf16_float = false;
+
 static bool
 lisa_parseOptions (int *pargc, char **argv, int *i)
 {
+  if (!strcmp (argv[*i], OPTION_BF16_FLOAT))
+    {
+      lisa_bf16_float = true;
+      return TRUE;
+    }
   return FALSE;
 }
 
@@ -249,6 +270,31 @@ lisa_finaliseOptions (void)
 {
   port->mem.default_local_map = data;
   port->mem.default_globl_map = data;
+  if (lisa_bf16_float)
+    {
+      addSet (&preArgvSet, Safe_strdup ("-D__SDCC_BF16_FLOAT"));
+      if (!options.nostdlib)
+        {
+          /* the object in the first library directory that has it */
+          const char *dir;
+          bool found = false;
+          for (dir = setFirstItem (libDirsSet); dir; dir = setNextItem (libDirsSet))
+            {
+              struct dbuf_s dbuf;
+              dbuf_init (&dbuf, PATH_MAX);
+              dbuf_printf (&dbuf, "%s%cbf16fs.rel", dir, DIR_SEPARATOR_CHAR);
+              if (pathExists (dbuf_c_str (&dbuf)))
+                {
+                  addSet (&relFilesSet, dbuf_detach_c_str (&dbuf));
+                  found = true;
+                  break;
+                }
+              dbuf_destroy (&dbuf);
+            }
+          if (!found)
+            addSet (&libFilesSet, Safe_strdup ("bf16float"));
+        }
+    }
 }
 
 static void
@@ -471,7 +517,7 @@ PORT lisa_port =
   "_",
   lisa_init,
   lisa_parseOptions,
-  0,
+  lisa_options,
   0,
   lisa_finaliseOptions,         /* finaliseOptions */
   lisa_setDefaultOptions,       /* setDefaultOptions */

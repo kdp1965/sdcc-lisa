@@ -72,12 +72,36 @@ LISAOBJECTS = $(patsubst %.c,%.rel,$(LISA_FLOAT) $(LISA_INT) $(LISA_LONG) $(LISA
 OBJ = setjmp.rel atomic_flag_test_and_set.rel heap.rel divu.rel bf16.rel bf16c.rel
 
 LIB = lisa.lib
+# --bf16-float: the float support routines on the bfloat16 unit, linked
+# ahead of lisa.lib
+LIB2 = bf16float.lib
+OBJ2 = bf16fs.rel
 AS = $(SAS)
 ASFLAGS = -plosgff
 
 CFLAGS = -I$(srcdir)/../../include -I. --std-c23
 
-all: $(PORTDIR)/$(LIB)
+all: $(PORTDIR)/$(LIB) $(PORTDIR)/$(LIB2)
+
+$(PORTDIR)/$(LIB2): $(OBJ2) Makefile
+ifeq ($(LIB_TYPE), SDCCLIB)
+	rm -f $@; \
+	$(top_builddir)/bin/sdcclib -a $@ $(OBJ2)
+else
+  ifeq ($(LIB_TYPE), AR)
+	$(SDAR) -rcSD $@ $(OBJ2)
+  else
+    ifeq ($(LIB_TYPE), RANLIB)
+	$(SDAR) -rcD $@ $(OBJ2)
+    else
+	rm -f $@
+	for i in $(basename $(OBJ2)); do echo $$i >>$@; done
+	cp $(OBJ2) $(PORTDIR)
+	# --bf16-float links bf16fs.rel as an object: the linker's listing update (-u) wants its .lst beside it
+	cp $(OBJ2:.rel=.lst) $(PORTDIR)
+    endif
+  endif
+endif
 
 $(PORTDIR)/$(LIB): $(OBJ) $(LISAOBJECTS) Makefile
 ifeq ($(LIB_TYPE), SDCCLIB)

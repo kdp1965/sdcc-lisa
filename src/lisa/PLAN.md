@@ -220,8 +220,13 @@ and `bf16c.c` expose it as `bf16_t` with explicit functions (the C
 the adder defective (the carry-out and the rounding-overflow cases;
 `lisa_isa.md` BF16 notes), so add/sub are software (round to nearest
 even), and `lisa_sim` got bit-exact ports of fadd/fmul/fdiv/fcmp/itof/
-ftoi from the RTL.  A `--bf16-float` library (option B) that puts the C
-float through the unit would build on these routines.
+ftoi from the RTL.  `--bf16-float` (main.c: `lisa_options`) puts the C
+float through them: `device/lib/lisa/bf16fs.c` replaces `__fsadd` etc.
+and the 8/16-bit conversions, linked as an object ahead of the libraries
+(`relFilesSet`, found in `libDirsSet`; a `-l bf16float` would make the
+linker warn about the generic definitions in lisa.lib), rounding every
+result to bf16; `test_bf16f.c`.  Next there: an asm `bf16_add` (the C
+one is ~800 cycles with the conversions, mul/div are ~430).
 
 Not done / next:
 * Code quality: more peepholes
