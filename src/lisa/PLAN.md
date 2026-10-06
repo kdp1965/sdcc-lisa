@@ -132,9 +132,26 @@ between non-overlapping temporaries.  Branches out of the +-1024-word range
 are relaxed after the peephole pass.  Instructions after `if/iftt/ifte`
 are emitted with a `.p` suffix so peephole rules leave them alone.
 
+Verified on the TT07 chip (LISA Commander loads Intel HEX; `hw_test.mjs
+ihx=<file>` runs a suite): test_core 25, test_signed 15, negate 6, varargs 5,
+digits 4, union 4, strs 4, plus the hello/printf/owl output tests.  Running
+on silicon found the ALU flag bugs (`lisa_core.v` 643-653: the adder is
+`acc + 8-bit operand` with the carry-in folded into the operand).  `lisa_sim`
+now models them and the generator works around them:
+* `add M` has no carry-in: multi-byte add is `adc #0; add M`, with the two
+  carries merged by `savec` / `if nc; restc` (`emitAddByteMem`).
+* `adc #k` adds `(k+C)&0xff`: subtract-literal is `ldc 1; adc #~k`, and a
+  byte whose operand is `0xff` gets `if nc; adc.p #0xff` so a wrapped
+  operand does not lose the carry.
+* `sub M` / `cmp M` report a borrow when `M == 0`: the memory operand is
+  tested with `cpi #1` first and a zero operand takes `ldc 0` / skips the
+  subtract (`ifte nc; sub.p M; ldc.p #0`, branchy for middle bytes).
+* `cpi` never sets `signed_inversion`: signed compares against a literal
+  bias both sides (`ldc 0; adc #0x80; cpi #(k^0x80)`) and branch unsigned;
+  signed compares against memory use `cmp` with the zero guard and a
+  `btst 7` path for a zero top byte.
+
 Not done / next:
-* Run on the TT07 chip (LISA Commander needs an Intel HEX loader; the
-  simulator mirrors the RTL but the silicon quirks are real).
 * Code quality: keep short-lived temporaries in A (the pdk-style
   tree-decomposition allocator with a dry-run cost model is the plan;
   `emit2`/`cost` are already structured for it), more peepholes
