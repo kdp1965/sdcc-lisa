@@ -1085,14 +1085,6 @@ loadTruth (const operand *op)
     loadOrBytes (aop, aop->size);
 }
 
-/* amode: baseline 1 (shift through carry). Signed compares etc. use 3. */
-static void
-emitAmode (int m)
-{
-  emit2 ("amode", "%d", m);
-  cost (1, 1);
-}
-
 /*-----------------------------------------------------------------*/
 /* Function entry / exit                                           */
 /*-----------------------------------------------------------------*/
@@ -1172,14 +1164,24 @@ genFunction (iCode *ic)
 
   G.ra_saved = functionClobbersRA (ic) || IFFUNC_ISISR (ftype);
 
+  /* An interrupt handler saves what the hardware does not: A, IX, RA (the
+     vector jal leaves it alone, isr_jump) and cflag_save, the shadow that
+     every savec ... restc window relies on - read through restc / ldac c
+     (the live flags are shadowed by the hardware and restored by rets).
+     The save shadow's signed inversion makes the round trip through the
+     ISR shadow by itself; the live signed_inversion is lost on TT07. */
   if (IFFUNC_ISISR (ftype))
     {
       emit2 ("push", "a");
       emit2 ("push", "ix");
-      cost (2, 3);
-      G.stack.pushed += 3;
+      emit2 ("sra", "");
+      emit2 ("restc", "");
+      emit2 ("ldac", "c");
+      emit2 ("push", "a");
+      cost (6, 9);
+      G.stack.pushed += 6;
     }
-  if (G.ra_saved)
+  else if (G.ra_saved)
     {
       emit2 ("sra", "");
       cost (1, 2);
@@ -1189,7 +1191,7 @@ genFunction (iCode *ic)
 
   if (sym->stack)
     adjustStack (-sym->stack);
-  wassert_bt (G.stack.pushed == sym->stack + (G.ra_saved ? 2 : 0) + (IFFUNC_ISISR (ftype) ? 3 : 0));
+  wassert_bt (G.stack.pushed == sym->stack + (IFFUNC_ISISR (ftype) ? 6 : G.ra_saved ? 2 : 0));
 }
 
 static void
@@ -1211,23 +1213,28 @@ genEndFunction (iCode *ic)
   if (sym->stack)
     adjustStack (sym->stack);
 
-  if (G.ra_saved)
-    {
-      emit2 ("lra", "");
-      cost (1, 2);
-      G.stack.pushed -= 2;
-    }
-
   if (IFFUNC_ISISR (ftype))
     {
+      /* cflag_save back (shr puts bit 0 in C), then RA, IX, A; rets restores
+         the live flags and re-enables interrupts */
+      emit2 ("pop", "a");
+      emit2 ("shr", "");
+      emit2 ("savec", "");
+      emit2 ("lra", "");
       emit2 ("pop", "ix");
       emit2 ("pop", "a");
       emit2 ("rets", "");
-      cost (3, 5);
-      G.stack.pushed -= 3;
+      cost (7, 11);
+      G.stack.pushed -= 6;
     }
   else
     {
+      if (G.ra_saved)
+        {
+          emit2 ("lra", "");
+          cost (1, 2);
+          G.stack.pushed -= 2;
+        }
       emit2 ("ret", "");
       cost (1, 2);
     }
@@ -2464,24 +2471,39 @@ shiftLeft1 (const asmop *aop, int size)
     }
 }
 
+/* C <- bit 7 of A (the sign), A and Z kept: for an arithmetic shift the
+   carry fed into the top byte is the sign.  amode stays 1 throughout the
+   generated code: it cannot be read back, so an interrupt handler could
+   not restore it. */
+static void
+emitSignToC (void)
+{
+  emit2 ("ldc", "#0");
+  emit2 ("btst", "7");
+  emit2 ("if", "z");
+  emit2 ("ldc", "#1");
+  cost (4, 4);
+}
+
 /* Shift the (memory) operand right by one bit in place, from the top byte down. */
 static void
 shiftRight1 (const asmop *aop, int size, bool sign)
 {
   for (int i = size - 1; i >= 0; i--)
     {
-      if (i == size - 1 && sign)
-        emitAmode (3);
       loadA (aop, i);
-      if (i == size - 1 && !sign)
+      if (i == size - 1)
         {
-          emit2 ("ldc", "#0");
-          cost (1, 1);
+          if (sign)
+            emitSignToC ();
+          else
+            {
+              emit2 ("ldc", "#0");
+              cost (1, 1);
+            }
         }
       emit2 ("shr", "");
       cost (1, 1);
-      if (i == size - 1 && sign)
-        emitAmode (1);
       storeA (aop, i);
     }
 }
@@ -2527,26 +2549,37 @@ genShift (const iCode *ic, bool left_shift)
           goto release;
         }
 
-      /* single byte: shift in A */
+      /* single byte: shift in A.  The shifts rotate through C: let the
+         garbage in and mask it afterwards (one andi for any count); an
+         arithmetic shift then fills the top bits with the sign. */
       if (size == 1)
         {
           loadA (left->aop, 0);
-          if (sign)
-            emitAmode (3);
-          if (n >= 3 && !sign)
-            emitAmode (0);
-          for (int i = 0; i < n; i++)
+          if (n == 1 && !sign)
             {
-              if (n < 3 && !sign)
+              emit2 ("ldc", "#0");
+              emit2 (left_shift ? "shl" : "shr", "");
+              cost (2, 2);
+            }
+          else
+            {
+              for (int i = 0; i < n; i++)
                 {
-                  emit2 ("ldc", "#0");
+                  emit2 (left_shift ? "shl" : "shr", "");
                   cost (1, 1);
                 }
-              emit2 (left_shift ? "shl" : "shr", "");
+              emit2 ("andi", "#0x%02x", left_shift ? (0xff << n) & 0xff : 0xff >> n);
               cost (1, 1);
+              if (sign)
+                {
+                  /* the masked bits are zero: adding the fill is an or */
+                  emit2 ("ldc", "#0");
+                  emit2 ("btst", "%d", 7 - n);
+                  emit2 ("if", "z");
+                  emit2 ("adc", "#0x%02x", (0xff << (8 - n)) & 0xff);
+                  cost (4, 4);
+                }
             }
-          if (sign || n >= 3)
-            emitAmode (1);
           storeA (result->aop, 0);
           goto release;
         }
@@ -2689,41 +2722,66 @@ genMult (const iCode *ic)
     }
   else if (laop->size == 1 && raop->size == 1)
     {
-      /* 8x8 -> 16, signed when both operands are */
+      /* 8x8 -> 16: mul / mulu give the unsigned product; signed (both
+         operands are) is corrected afterwards, high -= b if a < 0 and
+         high -= a if b < 0, instead of the amode 3 mul (amode stays 1, an
+         interrupt handler could not restore it) */
       bool sign = !isUnsignedOp (left) && !isUnsignedOp (right);
-      if (sign)
-        emitAmode (3);
+      asmop rtmp;
+      int rpushed = 0;
       if (!aopIsMem (raop, 0))
         {
           loadA (raop, 0);
           pushA ();
-          loadA (laop, 0);
-          emit2 ("mul", "1(sp)");
-          cost (1, 2);
-          pushA ();
-          loadA (laop, 0);
-          emit2 ("mulu", "2(sp)");
-          cost (1, 2);
-          if (sign)
-            emitAmode (1);
-          storeA (result->aop, 1);
-          popA ();
-          storeA (result->aop, 0);
-          adjustStack (1);
+          memset (&rtmp, 0, sizeof (rtmp));
+          rtmp.type = AOP_STK;
+          rtmp.size = 1;
+          rtmp.aopu.bytes[0].byteu.stk = 1 - G.stack.pushed;
+          raop = &rtmp;
+          rpushed = 1;
         }
-      else
+      loadA (laop, 0);
+      emitAluA ("mul", raop, 0);
+      pushA ();                                      /* low byte */
+      loadA (laop, 0);
+      emitAluA ("mulu", raop, 0);                    /* A = high byte */
+      if (sign)
         {
+          symbol *tlbl_a = regalloc_dry_run ? 0 : newiTempLabel (0);
+          symbol *tlbl_b = regalloc_dry_run ? 0 : newiTempLabel (0);
+          pushA ();                                  /* high byte at 1(sp) */
           loadA (laop, 0);
-          emitAluA ("mul", raop, 0);
-          pushA ();
-          loadA (laop, 0);
-          emitAluA ("mulu", raop, 0);
-          if (sign)
-            emitAmode (1);
-          storeA (result->aop, 1);
+          emit2 ("btst", "7");
+          cost (1, 1);
+          emitBranch ("bnz", tlbl_a);                /* Z = bit 7 */
+          emit2 ("ldax", "1(sp)");
+          /* a literal is subtracted as adc #~k with C = 1 (no borrow in),
+             memory with the hardware sub and C = 0; the value is right
+             whatever C ends up as */
+          emit2 ("ldc", (raop->type == AOP_LIT) ? "#1" : "#0");
+          cost (2, 2);
+          emitAluA ("sub", raop, 0);
+          emit2 ("stax", "1(sp)");
+          cost (1, 1);
+          emitLbl (tlbl_a);
+          loadA (raop, 0);
+          emit2 ("btst", "7");
+          cost (1, 1);
+          emitBranch ("bnz", tlbl_b);
+          emit2 ("ldax", "1(sp)");
+          emit2 ("ldc", (laop->type == AOP_LIT) ? "#1" : "#0");
+          cost (2, 2);
+          emitAluA ("sub", laop, 0);
+          emit2 ("stax", "1(sp)");
+          cost (1, 1);
+          emitLbl (tlbl_b);
           popA ();
-          storeA (result->aop, 0);
         }
+      storeA (result->aop, 1);
+      popA ();
+      storeA (result->aop, 0);
+      if (rpushed)
+        adjustStack (1);
       for (int i = 2; i < size; i++)
         {
           wassertl (regalloc_dry_run || !sign, "Unimplemented signed 8x8 multiplication with result wider than 16 bits");

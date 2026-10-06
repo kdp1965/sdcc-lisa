@@ -78,7 +78,10 @@ lisa_genXINIT (FILE *of)
  * Vector table, at the start of HOME (which the linker puts at code
  * address 0): word 0 is the reset vector, words 1..8 the eight interrupt
  * sources (LSB = highest priority), word 9 catches a request that is not
- * one-hot.  Each slot is one jal.  The glue has already switched to HOME.
+ * one-hot.  Each slot is one jal: the core's isr_jump suppresses the RA
+ * write of the first jump after an interrupt, so the handler finds the
+ * interrupted function's RA intact and saves it itself (genFunction).
+ * The glue has already switched to HOME.
  */
 int
 lisa_genIVT (struct dbuf_s *oBuf, symbol **intTable, int intCount)

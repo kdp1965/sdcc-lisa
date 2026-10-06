@@ -184,6 +184,10 @@ Not done / next:
   fusion), `shl16/shr16` for 16-bit shifts at 0..3(sp), hardware `div`/`rem`.
 * Bit fields, `ROT`, `GETWORD`, `IPUSH_VALUE_AT_ADDRESS` (struct
   arguments), `__critical` beyond eidi, floats in the library.
-* Interrupt handlers: generated (push a / push ix / sra ... rets) but not
-  tested.
+* Interrupt handlers: `__interrupt(n)` works on a core with sane interrupt
+  semantics (`lisa_sim --fixed-irq`, `test_irq.c`); on the TT07 silicon an
+  interrupt after an `if*` or inside an `ldx` corrupts execution
+  (`test_irqhaz.c` shows it on the chip), so compiled code must run with
+  interrupts off there (README-lisa.md "Interrupts on TT07").
+  `device/include/lisa/tt07.h` declares the peripherals.
 * A `--reti` option for a fixed core (1 word per constant byte).

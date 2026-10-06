@@ -68,6 +68,60 @@ build/bin/sdcc -mlisa -o prog.ihx prog.c          # Intel HEX, byte addresses = 
   Constant data initializers that point into code space are scaled
   accordingly (`src/SDCCval.c`, `lisaCodeScale`).
 
+## Peripherals and interrupts
+
+`#include <tt07.h>` (`device/include/lisa/tt07.h`, found automatically for
+`-mlisa`) declares the TT07 peripheral registers as `__sfr __at(0x2xx)`
+(single `lda`/`sta` instructions), their bits, the interrupt sources
+(`INT_TIMER1`...) and vector numbers (`LISA_INT_TIMER1`...), and
+`lisa_ei()` / `lisa_di()`:
+
+```c
+#include <tt07.h>
+volatile unsigned char ticks;
+void timer1_isr (void) __interrupt (LISA_INT_TIMER1)
+{
+  ticks++;
+  INT_STATUS = INT_TIMER1;        /* acknowledge */
+}
+...
+  TIMER1_PREDIV_LO = 0x4f; TIMER1_PREDIV_HI = 0xc3;   /* 50 MHz / 50000 = 1 ms */
+  TIMER1_DIV_LO = 5; TIMER1_DIV_HI = 0;               /* every 5 ms */
+  INT_ENABLE = INT_TIMER1;
+  TIMER1_CTRL = TIMER_CTRL_ENABLE;
+  lisa_ei ();
+```
+
+A handler is a normal function with a prologue that saves A, IX, RA (the
+vector `jal` leaves RA alone, the core's `isr_jump`) and `cflag_save` (the
+`savec`/`restc` shadow, which the hardware does not shadow), and ends with
+`rets`; the live C and Z come back from the hardware's shadows. Generated
+code never changes `amode` (it is not readable or shadowed), so a handler
+can use everything.
+
+### Interrupts on TT07
+
+The TT07 silicon samples an interrupt in the same cycle that executes an
+`if`/`ifte`/`iftt` or the first word of an `ldx` (two single-stage passes),
+and saves neither the predicate nor the pending literal. After `rets` the
+predicated instruction runs unconditionally, and an `ldx` gets the vector
+word as its value while its literal is later executed as an opcode
+(always a `jal`). `sdcc_test/test_irqhaz.c` shows both on the chip: in two
+20 ms runs with a 1 ms timer it counted 2 lost predicates and 1 corrupted
+`ldx`. There is no software workaround at acceptable cost — `ldx` and
+predication are in almost every generated sequence — so **on TT07,
+interrupts must stay disabled while compiled code runs**: a handler can
+be used only around code written in assembly without `if*`/`ldx`, as
+`test_irq2.c` does (its wait loop is `cpi`/`bnz`). The live
+`signed_inversion` is also lost on return (an interrupt between a signed
+`cmp` and its `if slt` branches wrong).
+
+`lisa_sim` models this exactly; `lisa_sim --fixed-irq` models the
+semantics a respin should have, under which the C handler support is
+correct (`test_irq.c` passes there with interrupts landing anywhere in
+32-bit arithmetic, signed multiplies and shifts). The RTL changes for that
+are listed in `lisa_isa.md` ("TT07 interrupt notes").
+
 ## Regression testing
 
 SDCC's own suite (`support/regression`, ~1650 test files, ~6000 generated
@@ -97,6 +151,6 @@ The smaller, chip-sized suite is `../sdcc_test` (`make check`); its
 | compiler back end | `src/lisa/{main.c,gen.c,ralloc.c,peeph.def}` |
 | assembler | `sdas/aslisa/{lisa.h,lisaadr.c,lisamch.c,lisapst.c}`, data-in-code expansion in `sdas/asxxsrc/asout.c`, `.p` suffix in `asmain.c` |
 | linker | `sdas/linksrc/lkrloc3.c` (LISA relocation rules), `lkarea.c` (code/data spaces, CDATA alignment, `s_<area>` symbols) |
-| library | `device/lib/lisa/{Makefile.in,setjmp.s,atomic_flag_test_and_set.s,heap.s}`, `device/include/stdarg.h`, `setjmp.h`, `stdatomic.h` |
+| library | `device/lib/lisa/{Makefile.in,setjmp.s,atomic_flag_test_and_set.s,heap.s}`, `device/include/lisa/tt07.h` (peripherals, interrupts), `device/include/stdarg.h`, `setjmp.h`, `stdatomic.h` |
 | regression port | `support/regression/ports/lisa/{spec.mk,support.c}`, `fwk/include/testfwk.h` (`__SDCC_lisa`), LISA addresses in `tests/bitfields-*.c.in`, `tests/absolute.c.in` |
 | generic hooks | `src/SDCCglue.c` (program startup jumps, sfr table, FDATA), `src/SDCCsymt.c` (8-bit div/mod helpers return int; `__at` objects stay in data), `src/SDCCmem.c` (big objects to FDATA), `src/SDCCval.c` (code-pointer offset scaling), `src/port.h`, `src/SDCCmain.c`, `configure.ac`, `Makefile.in`, `device/lib/Makefile.in`, `device/lib/malloc.c` (lazy heap init) |
