@@ -274,30 +274,103 @@ stkOffset (const asmop *aop, int offset)
 
   wassert_bt (aop->type == AOP_STK);
   stk = (offset < 8 ? aop->aopu.bytes[offset].byteu.stk : aop->aopu.bytes[0].byteu.stk + offset) + G.stack.pushed;
-  if (!regalloc_dry_run && (stk < 0 || stk > 511))
-    {
-      /* n(sp) has a 9-bit offset: the frame (locals, spill slots, pushed
-         arguments) of one function cannot exceed 511 bytes.  Reported once
-         per function. */
-      static symbol *reported;
-      if (reported != currFunc)
-        {
-          reported = currFunc;
-          werror (E_STACK_OUT, currFunc ? currFunc->name : "?");
-          fprintf (stderr, "lisa: the frame of a function (locals, spill slots and pushed arguments) is limited to 511 bytes, the n(sp) offset field is 9 bits\n");
-        }
-      return (stk < 0 ? 0 : 511);
-    }
+  wassertl_bt (regalloc_dry_run || stk >= 0, "Stack offset below SP");
   return (stk);
 }
 
-/* Operand text for n(sp). */
+/* Operand text for n(sp); the caller has checked that the byte is in reach
+   (stkIsFar). */
 static const char *
 stkArg (const asmop *aop, int offset)
 {
   static char buffer[32];
-  SNPRINTF (buffer, sizeof (buffer), "%d(sp)", stkOffset (aop, offset));
+  int stk = stkOffset (aop, offset);
+  wassertl_bt (regalloc_dry_run || stk <= 511, "Far stack byte in n(sp)");
+  SNPRINTF (buffer, sizeof (buffer), "%d(sp)", stk);
   return (buffer);
+}
+
+/* Far stack bytes.  n(sp) reaches 511 bytes above SP; a byte further away
+   is addressed through IX, pointed at a base near it with spix and a chain
+   of adx (A untouched, SP untouched - an interrupt can hit at any point).
+   The IX tracker (AOP_STL, offset relative to the SP at function entry)
+   remembers the base, so neighbouring bytes reuse it. */
+#define FAR_STK_REM 256         /* the base sits this far below the first byte asked for */
+
+/* entry-SP-relative offset of a stack byte */
+static int
+stkEntryOffset (const asmop *aop, int offset)
+{
+  return (offset < 8 ? aop->aopu.bytes[offset].byteu.stk : aop->aopu.bytes[0].byteu.stk + offset);
+}
+
+static bool
+stkIsFar (const asmop *aop, int offset)
+{
+  return (aop->type == AOP_STK && stkEntryOffset (aop, offset) + G.stack.pushed > 511);
+}
+
+static void ixLoadStackAddr (int stk_off);
+static void ixInvalidate (void);
+
+/* The tracked base reaches the byte: its rem(ix) offset, else -1. */
+static int
+farStkTracked (const asmop *aop, int offset)
+{
+  int rem = stkEntryOffset (aop, offset) - G.ix.offset;
+  if (G.ix.type == AOP_STL && rem >= 0 && rem <= 511)
+    return (rem);
+  return (-1);
+}
+
+/* Point IX at a base for the byte (clobbers IX, tracked) and return the
+   rem(ix) text - the memory operand form, like memArg for data memory. */
+static const char *
+farStkArg (const asmop *aop, int offset)
+{
+  static char buffer[32];
+  int rem = farStkTracked (aop, offset);
+  if (rem < 0)
+    {
+      ixLoadStackAddr (stkEntryOffset (aop, offset) - FAR_STK_REM);
+      rem = FAR_STK_REM;
+    }
+  SNPRINTF (buffer, sizeof (buffer), "%d(ix)", rem);
+  return (buffer);
+}
+
+/* ldax / stax of a far byte with IX preserved: through the tracked base
+   when it reaches, else around a saved IX. */
+static void
+farStkAccess (const char *op, const asmop *aop, int offset)
+{
+  int rem = farStkTracked (aop, offset);
+  if (rem >= 0)
+    {
+      emit2 (op, "%d(ix)", rem);
+      cost (1, 1);
+      return;
+    }
+  emit2 ("push", "ix");
+  cost (1, 2);
+  G.stack.pushed += 2;
+  {
+    int n = stkEntryOffset (aop, offset) + G.stack.pushed;
+    emit2 ("spix", "");
+    cost (1, 1);
+    while (n > 511)
+      {
+        emit2 ("adx", "#511");
+        cost (1, 1);
+        n -= 511;
+      }
+    emit2 ("adx", "#%d", n);
+    emit2 (op, "0(ix)");
+    cost (2, 2);
+  }
+  emit2 ("pop", "ix");
+  cost (1, 2);
+  G.stack.pushed -= 2;
 }
 
 /* Operand text for a direct data / peripheral address. */
@@ -637,21 +710,23 @@ ixLoadStackAddr (int stk_off)
     return;
   emit2 ("spix", "");
   cost (1, 1);
+  /* adx takes -512..511; chain it for more rather than touch A */
+  while (n > 511)
+    {
+      emit2 ("adx", "#511");
+      cost (1, 1);
+      n -= 511;
+    }
+  while (n < -512)
+    {
+      emit2 ("adx", "#-512");
+      cost (1, 1);
+      n += 512;
+    }
   if (n)
     {
-      if (n >= -512 && n <= 511)
-        {
-          emit2 ("adx", "#%d", n);
-          cost (1, 1);
-        }
-      else
-        {
-          emit2 ("ldi", "#0x%02x", n & 0xff);
-          emit2 ("addax", "");
-          emit2 ("ldi", "#0x%02x", (n >> 8) & 0xff);
-          emit2 ("addaxu", "");
-          cost (4, 4);
-        }
+      emit2 ("adx", "#%d", n);
+      cost (1, 1);
     }
   G.ix.type = AOP_STL;
   G.ix.offset = stk_off;
@@ -682,6 +757,11 @@ loadA (const asmop *aop, int offset)
       cost (1, 1);
       break;
     case AOP_STK:
+      if (stkIsFar (aop, offset))
+        {
+          farStkAccess ("ldax", aop, offset);
+          break;
+        }
       emit2 ("ldax", "%s", stkArg (aop, offset));
       cost (1, 1);
       break;
@@ -760,6 +840,11 @@ storeA (const asmop *aop, int offset)
       wassert_bt (aopInReg (aop, offset, A_IDX));
       break;
     case AOP_STK:
+      if (stkIsFar (aop, offset))
+        {
+          farStkAccess ("stax", aop, offset);
+          break;
+        }
       emit2 ("stax", "%s", stkArg (aop, offset));
       cost (1, 1);
       break;
@@ -798,7 +883,7 @@ memArg (const asmop *aop, int offset)
 {
   static char buffer[32];
   if (aop->type == AOP_STK)
-    return (stkArg (aop, offset));
+    return (stkIsFar (aop, offset) ? farStkArg (aop, offset) : stkArg (aop, offset));
   wassert_bt (aop->type == AOP_DIR);
   ixLoadSym (aop, 0);
   SNPRINTF (buffer, sizeof (buffer), "%d(ix)", offset);
@@ -812,6 +897,8 @@ prepareMem (const asmop *aop, int offset)
 {
   if (aop->type == AOP_DIR && offset < aop->size)
     ixLoadSym (aop, 0);
+  else if (offset < aop->size && stkIsFar (aop, offset))
+    farStkArg (aop, offset);
 }
 
 /* A <- A op aop[offset] for op in add/sub/and/or/xor/cmp (memory forms).
@@ -1184,18 +1271,12 @@ genReturn (const iCode *ic)
           slot.size = G.stack.ret_size;
           for (int i = 0; i < slot.size && i < 8; i++)
             slot.aopu.bytes[i].byteu.stk = 1 + i;
-          if (left->aop->type == AOP_STK && G.stack.ret_size > 8)
+          /* bytes beyond the 8 tracked ones are addressed from byte 0 */
+          for (int i = 0; i < G.stack.ret_size; i++)
             {
-              /* copy byte by byte with explicit offsets */
-              for (int i = 0; i < G.stack.ret_size; i++)
-                {
-                  loadA (left->aop, i);
-                  emit2 ("stax", "%d(sp)", 1 + i + G.stack.pushed);
-                  cost (1, 1);
-                }
+              loadA (left->aop, i);
+              storeA (&slot, i);
             }
-          else
-            genMove_o (&slot, 0, left->aop, 0, G.stack.ret_size);
         }
       freeAsmop (left);
     }
@@ -1315,7 +1396,7 @@ genCall (const iCode *ic)
           emit2 ("ldx", "#%s", left->aop->aopu.immd);
           cost (2, 2);
         }
-      else if (left->aop->type == AOP_STK)
+      else if (left->aop->type == AOP_STK && !stkIsFar (left->aop, 0) && !stkIsFar (left->aop, 1))
         {
           emit2 ("ldxx", "%s", stkArg (left->aop, 0));
           cost (1, 2);
@@ -1323,6 +1404,7 @@ genCall (const iCode *ic)
       else
         {
           loadA (left->aop, 0);
+          ixInvalidate ();
           emit2 ("tax", "");
           loadA (left->aop, 1);
           emit2 ("taxu", "");
@@ -1446,7 +1528,10 @@ emitAddByteMem (const asmop *raop, int i, bool keep_carry)
 static void
 loadAKeepC (const asmop *laop, int i)
 {
-  bool lit = (laop->type == AOP_LIT || laop->type == AOP_IMMD || i >= laop->size);
+  /* ldi clears C; the address of a stack object is computed with ldc/adc;
+     code space reads return through an ldi */
+  bool lit = (laop->type == AOP_LIT || laop->type == AOP_IMMD || laop->type == AOP_STL ||
+              laop->type == AOP_CODE || i >= laop->size);
   if (lit)
     {
       emit2 ("savec", "");
@@ -2779,8 +2864,21 @@ ixLoadPtr (const asmop *aop)
         int stk = aop->aopu.bytes[0].byteu.stk;
         if (G.ix.type == AOP_STK && G.ix.offset == stk)
           return;
-        emit2 ("ldxx", "%s", stkArg (aop, 0));
-        cost (1, 2);
+        if (stkIsFar (aop, 0) || stkIsFar (aop, 1))
+          {
+            /* ldxx is an SP window too: byte by byte, the far loads keep IX */
+            loadA (aop, 0);
+            ixInvalidate ();
+            emit2 ("tax", "");
+            loadA (aop, 1);
+            emit2 ("taxu", "");
+            cost (2, 2);
+          }
+        else
+          {
+            emit2 ("ldxx", "%s", stkArg (aop, 0));
+            cost (1, 2);
+          }
         G.ix.type = AOP_STK;
         G.ix.offset = stk;
       }

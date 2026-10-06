@@ -94,6 +94,59 @@ createStackSpil (symbol *sym)
   return sym;
 }
 
+/* n(sp) reaches 511 bytes above SP; beyond that a byte costs an IX
+   window.  When a frame is bigger than that (a large local array), lay
+   it out again with the small objects nearest SP and the big ones behind
+   them, so that scalars, spill slots and small arrays keep the one-word
+   access and only the big arrays - which are indexed through IX anyway -
+   sit far.  The block-scope sharing of redoStackOffsets is given up for
+   such a function. */
+static int
+farLayoutCompare (const void *a, const void *b)
+{
+  const symbol *sa = *(symbol *const *) a, *sb = *(symbol *const *) b;
+  int da = getSize (sa->type), db = getSize (sb->type);
+  if (da != db)
+    return (da - db);
+  return (sa->key - sb->key);   /* stable for equal sizes */
+}
+
+static void
+lisaFarFrameLayout (void)
+{
+  if (!currFunc || currFunc->stack <= 511)
+    return;
+
+  int n = 0;
+  for (symbol *sym = setFirstItem (istack->syms); sym; sym = setNextItem (istack->syms))
+    if (!sym->_isparm && (IS_AGGREGATE (sym->type) || sym->allocreq))
+      n++;
+  if (!n)
+    return;
+  symbol **syms = Safe_alloc (n * sizeof (symbol *));
+  int i = 0;
+  for (symbol *sym = setFirstItem (istack->syms); sym; sym = setNextItem (istack->syms))
+    if (!sym->_isparm && (IS_AGGREGATE (sym->type) || sym->allocreq))
+      syms[i++] = sym;
+  qsort (syms, n, sizeof (symbol *), farLayoutCompare);
+
+  int total = 0;
+  for (i = 0; i < n; i++)
+    total += getSize (syms[i]->type);
+  /* sym->stack = -total is the byte just above SP (1(sp)); the smallest
+     objects go there */
+  int pos = 0;
+  for (i = 0; i < n; i++)
+    {
+      syms[i]->stack = -total + pos;
+      SPEC_STAK (syms[i]->etype) = syms[i]->stack;
+      pos += getSize (syms[i]->type);
+    }
+  currFunc->stack = total;
+  SPEC_STAK (currFunc->etype) = total;
+  Safe_free (syms);
+}
+
 /*-----------------------------------------------------------------*/
 /* spillThis - spils a specific operand                            */
 /*-----------------------------------------------------------------*/
@@ -643,7 +696,10 @@ lisa_assignRegisters (ebbIndex *ebbi)
   /* redo the offsets for stacked automatic variables: variables of
      disjoint blocks share stack space */
   if (currFunc)
-    redoStackOffsets ();
+    {
+      redoStackOffsets ();
+      lisaFarFrameLayout ();
+    }
   if (getenv ("LISA_DEBUG_STACK"))
     for (symbol *sym = setFirstItem (istack->syms); sym; sym = setNextItem (istack->syms))
       fprintf (stderr, "stk %s block %d level %ld stack %d size %d allocreq %d live %d-%d\n", sym->name, sym->block, (long) sym->level, sym->stack, getSize (sym->type), sym->allocreq, sym->liveFrom, sym->liveTo);

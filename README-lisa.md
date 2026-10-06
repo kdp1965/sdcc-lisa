@@ -58,8 +58,10 @@ build/bin/sdcc -mlisa -o prog.ihx prog.c          # Intel HEX, byte addresses = 
   globals live in `DATA`/`INITIALIZED` there; uninitialized objects of 64
   bytes or more (and anything declared `__xdata`) go to `FDATA` behind them
   and are addressed through IX. An `__at` object beyond 0x1ff is addressed
-  through IX too. A function's frame (locals, spill slots, pushed
-  arguments) is limited to 511 bytes (`n(sp)` has a 9-bit offset).
+  through IX too. `n(sp)` reaches 511 bytes; in a bigger frame the small
+  objects are laid out nearest SP and bytes beyond the reach are addressed
+  through an IX window (`spix`, chained `adx`, `n(ix)`; SP never moves, so
+  interrupts are safe), so frames are limited only by RAM.
 * Code-space constants: `const` globals live in code space as `ldi/ret`
   pairs (two words per byte); a pointer to them is the pair index with bit
   15 set, which is what the generic-pointer code tests at run time.
@@ -82,9 +84,8 @@ cat results/lisa.sum                # summary; results/lisa/<test>.out has the d
 `LISA_SIM=`), runs with `--stack-loc 0x7fff` (the simulator has 32K of data)
 and `_exitEmu()` executes `brk`, which halts the simulator. The Makefile only
 tracks the test sources: after changing the compiler or the library,
-`rm -rf gen/lisa results/lisa` first. Tests that cannot fit the port (frames
-over 511 bytes, addresses outside the 32K data space) are listed in
-`support/regression/MakeList` under `EXCLUDE_lisa`.
+`rm -rf gen/lisa results/lisa` first. Tests that hard-code addresses outside
+the 32K data space have LISA-specific addresses.
 
 The smaller, chip-sized suite is `../sdcc_test` (`make check`); its
 `test_regress.c` collects the bugs the big suite found.

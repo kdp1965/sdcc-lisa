@@ -152,10 +152,9 @@ now models them and the generator works around them:
   `btst 7` path for a zero top byte.
 
 SDCC's own regression suite (`support/regression`, `make test-lisa`,
-~6000 cases, ~31k test points on lisa_sim) runs on the port as of
-2026-10-06 with a few dozen failures left, all frames over 511 bytes or
-addresses outside the 32K data space (listed in `MakeList` as
-`EXCLUDE_lisa`).  Getting there fixed: ldx hoisted out of predicated pairs
+~6000 cases, ~31k test points on lisa_sim) passes on the port as of
+2026-10-06 (tests that hard-code addresses outside the 32K data space got
+LISA addresses).  Getting there fixed: ldx hoisted out of predicated pairs
 (ldx is two words - a skipped ldx executes its literal), the borrow
 convention of zero-extension bytes in subtractions, struct arguments
 (IPUSH_VALUE_AT_ADDRESS), bit fields (read, write, _BitInt padding), the
@@ -170,7 +169,12 @@ __critical, calls through constants, lldiv and the char multiply helpers,
 and a peephole that dropped a reload whose Z flag was still needed
 (`lisaNotUsed` now tracks Z/C liveness for the rules).  Memory layout: big
 objects (>= 64 bytes, or `__xdata`) go to FDATA / FINITIALIZED behind the
-directly addressed data and are reached through IX.
+directly addressed data and are reached through IX.  Frames bigger than
+the 511-byte `n(sp)` reach are laid out with the small objects nearest SP
+(`lisaFarFrameLayout`), and far bytes go through an IX window (`spix`,
+chained `adx`, `n(ix)`; the IX tracker keeps the base, loads and stores
+that must keep IX wrap it in `push ix`/`pop ix`); SP never moves, so this
+is interrupt-safe, unlike an `ads` window would be.
 
 Not done / next:
 * Code quality: keep short-lived temporaries in A (the pdk-style
