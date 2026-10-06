@@ -218,8 +218,9 @@ Not done / next:
 * Code quality: more peepholes
   (`ldax x; stax x`, `ldi 0; stax a; ldi 0; stax b`, compare-then-branch
   fusion), 32-bit division on the 16-bit divider.
-* Bit fields, `ROT`, `GETWORD`, `IPUSH_VALUE_AT_ADDRESS` (struct
-  arguments), `__critical` beyond eidi, floats in the library.
+* `ROT` and `GETWORD` are not claimed (`hasExtBitOp`: GETBYTE only), so
+  SDCC lowers them itself; `__critical` is just eidi (no interrupt state
+  to save: `ie` cannot be read).
 * Interrupt handlers: `__interrupt(n)` works on a core with sane interrupt
   semantics (`lisa_sim --fixed-irq`, `test_irq.c`); on the TT07 silicon an
   interrupt after an `if*` or inside an `ldx` corrupts execution
