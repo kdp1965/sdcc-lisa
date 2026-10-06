@@ -433,7 +433,7 @@ lnkarea(void)
                         /* sdld specific */
                         /* Determine memory space */
                         locIndex = 0;
-                        if ((TARGET_IS_8051)) {
+                        if (TARGET_IS_8051 || TARGET_IS_LISA) {
                                 if (ap->a_flag & A_CODE) {
                                         locIndex = 1;
                                 }
@@ -447,6 +447,9 @@ lnkarea(void)
                         /*
                          * Relocatable sections
                          */
+                        /* sdld lisa: constant data in code space comes in 4-byte units */
+                        if (TARGET_IS_LISA && (ap->a_flag & A_CDATA))
+                                rloc[locIndex] = (rloc[locIndex] + 3) & ~(a_uint) 3;
                         if (!is_sdld() || TARGET_IS_Z80 || TARGET_IS_Z180 || TARGET_IS_GB) {
                                 if (ap->a_addr == 0)
                                         ap->a_addr = rloc[locIndex];
@@ -481,6 +484,12 @@ lnkarea(void)
                         sp->s_addr = ap->a_addr;
                         if (!is_sdld() || TARGET_IS_Z80 || TARGET_IS_Z180 || TARGET_IS_GB)
                                 sp->s_axp = NULL;
+                        /* sdld lisa: keep the area link so that code
+                           addresses get converted like any other symbol */
+                        if (TARGET_IS_LISA && (ap->a_flag & A_CODE) && ap->a_axp) {
+                                sp->s_addr = 0;
+                                sp->s_axp = ap->a_axp;
+                        }
                         sp->s_type |= S_DEF;
 
                         *temp = 'l';
@@ -919,6 +928,12 @@ VOID lnkarea2 (void)
                         sp->s_addr = ap->a_addr;
                         sp->s_type |= S_DEF;
                         if (!strcmp(ap->a_id, "DSEG")) sp_dseg_s=sp;
+                        /* sdld lisa: keep the area link so that code
+                           addresses get converted like any other symbol */
+                        if (TARGET_IS_LISA && (ap->a_flag & A_CODE) && ap->a_axp) {
+                                sp->s_addr = 0;
+                                sp->s_axp = ap->a_axp;
+                        }
 
                         *temp = 'l';
                         sp = lkpsym(temp, 1);

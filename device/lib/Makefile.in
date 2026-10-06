@@ -86,6 +86,7 @@ OPT_DISABLE_PDK15    = @OPT_DISABLE_PDK15@
 OPT_DISABLE_MOS6502  = @OPT_DISABLE_MOS6502@
 OPT_DISABLE_MOS65C02 = @OPT_DISABLE_MOS65C02@
 OPT_DISABLE_F8       = @OPT_DISABLE_F8@
+OPT_DISABLE_LISA     = @OPT_DISABLE_LISA@
 
 SOURCES_FLOAT = $(COMMON_FLOAT) \
   _fscmp.c \
@@ -288,6 +289,9 @@ endif
 ifeq ($(OPT_DISABLE_PDK15), 0)
 TARGETS        += model-pdk15
 TARGETS        += model-pdk15-stack-auto
+endif
+ifeq ($(OPT_DISABLE_LISA), 0)
+TARGETS        += model-lisa
 endif
 
 ifeq ($(OPT_DISABLE_F8), 0)
@@ -516,6 +520,16 @@ model-pdk15:
 	if grep '^pdk$$' $(top_builddir)/ports.build > /dev/null; then \
 	  $(MAKE) MODELFLAGS="-mpdk15" PORT=pdk15 objects-pdk15 || exit 1; \
 	fi
+
+model-lisa:
+	if grep '^lisa$$' $(top_builddir)/ports.build > /dev/null; then \
+	  $(MAKE) MODELFLAGS="-mlisa" PORT=lisa objects-lisa || exit 1; \
+	fi
+
+objects-lisa:
+	$(MAKE) build-dir
+	$(MAKE) port-specific-objects
+	$(MAKE) clean_intermediate
 
 objects-pdk15:
 	$(MAKE) build-dir

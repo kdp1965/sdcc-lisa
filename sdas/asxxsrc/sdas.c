@@ -74,6 +74,7 @@ sdas_init (char *path)
     { "pdk14", TARGET_ID_PDK14 },
     { "pdk15", TARGET_ID_PDK15 },
     { "pdk16", TARGET_ID_PDK16 },
+    { "lisa", TARGET_ID_LISA },
   };
   int i = NELEM (tgt);
 
@@ -158,4 +159,11 @@ is_sdas_target_pdk(void)
   return target == TARGET_ID_PDK13 ||
          target == TARGET_ID_PDK14 ||
          target == TARGET_ID_PDK15;
+}
+
+int
+is_sdas_target_lisa(void)
+{
+  check_init();
+  return target == TARGET_ID_LISA;
 }

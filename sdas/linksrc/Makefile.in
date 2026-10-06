@@ -63,7 +63,7 @@ transform       = @program_transform_name@
 
 # Compiling entire program or any subproject
 # ------------------------------------------
-all: sdcc-ld8051 sdcc-ldz80 sdcc-ldgb sdcc-ld6808 sdcc-ldstm8 sdcc-ldpdk sdcc-ldf8
+all: sdcc-ld8051 sdcc-ldz80 sdcc-ldgb sdcc-ld6808 sdcc-ldstm8 sdcc-ldpdk sdcc-ldf8 sdcc-ldlisa
 
 sdcc-ld8051: checkconf $(ASLINK)
 
@@ -79,7 +79,9 @@ sdcc-ldf8: checkconf $(top_builddir)/bin/sdldf8$(EXEEXT)
 
 sdcc-ldpdk: checkconf $(top_builddir)/bin/sdldpdk$(EXEEXT)
 
-$(top_builddir)/bin/sdldz80$(EXEEXT) $(top_builddir)/bin/sdldgb$(EXEEXT) $(top_builddir)/bin/sdldstm8$(EXEEXT) $(top_builddir)/bin/sdld6808$(EXEEXT) $(top_builddir)/bin/sdldpdk$(EXEEXT) $(top_builddir)/bin/sdldf8$(EXEEXT): $(ASLINK)
+sdcc-ldlisa: checkconf $(top_builddir)/bin/sdldlisa$(EXEEXT)
+
+$(top_builddir)/bin/sdldz80$(EXEEXT) $(top_builddir)/bin/sdldgb$(EXEEXT) $(top_builddir)/bin/sdldstm8$(EXEEXT) $(top_builddir)/bin/sdld6808$(EXEEXT) $(top_builddir)/bin/sdldpdk$(EXEEXT) $(top_builddir)/bin/sdldf8$(EXEEXT) $(top_builddir)/bin/sdldlisa$(EXEEXT): $(ASLINK)
 	cp -p $(ASLINK) $@
 
 $(ASLINK): $(LKOBJECTS)
@@ -117,11 +119,16 @@ install: all installdirs
 	  $(INSTALL) $(top_builddir)/bin/sdldf8$(EXEEXT) $(DESTDIR)$(bindir)/`echo 'sdldf8' | sed '$(transform)'`$(EXEEXT); \
 	  $(STRIP) $(DESTDIR)$(bindir)/`echo 'sdldf8' | sed '$(transform)'`$(EXEEXT); \
 	fi
+	if [ "`grep lisa $(top_builddir)/ports.build`" = "lisa" ]; \
+	then \
+	  $(INSTALL) $(top_builddir)/bin/sdldlisa$(EXEEXT) $(DESTDIR)$(bindir)/`echo 'sdldlisa' | sed '$(transform)'`$(EXEEXT); \
+	  $(STRIP) $(DESTDIR)$(bindir)/`echo 'sdldlisa' | sed '$(transform)'`$(EXEEXT); \
+	fi
 
 # Deleting all the installed files
 # --------------------------------
 uninstall:
-	for ld in $(top_builddir)/bin/sdld $(top_builddir)/bin/sdldz80 $(top_builddir)/bin/sdldgb $(top_builddir)/bin/sdldstm8 $(top_builddir)/bin/sdld6808 $(top_builddir)/bin/sdldpdk $(top_builddir)/bin/sdldf8; \
+	for ld in $(top_builddir)/bin/sdld $(top_builddir)/bin/sdldz80 $(top_builddir)/bin/sdldgb $(top_builddir)/bin/sdldstm8 $(top_builddir)/bin/sdld6808 $(top_builddir)/bin/sdldpdk $(top_builddir)/bin/sdldf8 $(top_builddir)/bin/sdldlisa; \
 	do \
 	  rm -f $(DESTDIR)$(bindir)/`echo \`basename $$ld\` | sed '$(transform)'`$(EXEEXT); \
 	done

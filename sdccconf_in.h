@@ -127,6 +127,9 @@
 /* XXX */
 #undef OPT_DISABLE_F8
 
+/* Define to 1 to disable the LISA port */
+#undef OPT_DISABLE_LISA
+
 /* XXX */
 #undef OPT_DISABLE_HC08
 

@@ -2025,7 +2025,7 @@ void
 emitMaps (void)
 {
   namedspacemap *nm;
-  int publicsfr = TARGET_IS_MCS51 || TARGET_PDK_LIKE;      /* Ideally, this should be true for all  */
+  int publicsfr = TARGET_IS_MCS51 || TARGET_PDK_LIKE || TARGET_IS_LISA;      /* Ideally, this should be true for all  */
                                                            /* ports but let's be conservative - EEP */
 
   inInitMode++;
@@ -2351,7 +2351,7 @@ glue (void)
   if (port->assembler.externGlobal)
     printExterns (asmFile);
 
-  if ((mcs51_like) || (TARGET_Z80_LIKE && !TARGET_IS_TLCS90) || TARGET_PDK_LIKE)  /*.p.t.20030924 need to output SFR table for Z80 as well */
+  if ((mcs51_like) || (TARGET_Z80_LIKE && !TARGET_IS_TLCS90) || TARGET_PDK_LIKE || TARGET_IS_LISA)  /*.p.t.20030924 need to output SFR table for Z80 as well */
     {
       /* copy the sfr segment */
       fprintf (asmFile, "%s", iComments2);
@@ -2578,6 +2578,8 @@ glue (void)
         fprintf (asmFile, "\tjp\t#__sdcc_program_startup\n");
       else if(TARGET_PDK_LIKE)
         fprintf (asmFile, "\tgoto\t__sdcc_program_startup\n");
+      else if(TARGET_IS_LISA)
+        fprintf (asmFile, "\tjal\t__sdcc_program_startup\n");
       else
         fprintf (asmFile, "\t%cjmp\t__sdcc_program_startup\n", options.acall_ajmp ? 'a' : 'l');
     }
@@ -2603,6 +2605,8 @@ glue (void)
         fprintf (asmFile, "\tjp\t#_main\n");
       else if(TARGET_PDK_LIKE)
         fprintf (asmFile, "\tgoto\t_main\n");
+      else if(TARGET_IS_LISA)
+        fprintf (asmFile, "\tjal\t_main\n00001$:\n\tbr\t00001$\n");
       else
         fprintf (asmFile, "\t%cjmp\t_main\n", options.acall_ajmp ? 'a' : 'l');        /* needed? */
       fprintf (asmFile, ";\treturn from main will return to caller\n");

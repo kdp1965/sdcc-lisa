@@ -1,0 +1,46 @@
+// peeph.def - LISA peephole rules
+//
+// Instruction conventions used below: everything lives on the stack or in
+// data memory, A is a scratch accumulator.  An instruction that follows an
+// if/iftt/ifte is emitted with a ".p" suffix: it is predicated and must not
+// be merged or removed, so rules only mention it explicitly.
+
+replace restart {
+	stax	%1
+	ldax	%1
+} by {
+	stax	%1
+	; peephole 0 removed redundant ldax %1
+} if notVolatile(%1)
+
+replace restart {
+	br	%1
+%1:
+} by {
+%1:
+	; peephole 1 removed br to next line
+}
+
+replace restart {
+	ldi	%1
+	ldi	%2
+} by {
+	ldi	%2
+	; peephole 2 removed dead ldi %1
+}
+
+replace restart {
+	if	ne
+	br.p	%1
+} by {
+	bnz	%1
+	; peephole 3 if ne; br -> bnz
+}
+
+replace restart {
+	if	eq
+	br.p	%1
+} by {
+	bz	%1
+	; peephole 4 if eq; br -> bz
+}

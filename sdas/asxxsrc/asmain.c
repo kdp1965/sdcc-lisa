@@ -1048,6 +1048,14 @@ loop:
          *     [labels] sym .glbequ value   defines a global equate
          *     [labels] sym .lclequ value   defines a local equate
          */
+        /* sdas lisa specific: a ".p" suffix marks an instruction that
+           follows an if/iftt/ifte (the compiler's peephole optimizer
+           must not touch it); it assembles like the plain mnemonic. */
+        if (is_sdas_target_lisa()) {
+                int l = strlen(id);
+                if (l > 2 && id[l-2] == '.' && id[l-1] == 'p' && id[0] != '.')
+                        id[l-2] = 0;
+        }
         if ((mlookup(id) == NULL) && (nlookup(id) == NULL)) {
                 if (flevel)
                         return;

@@ -353,6 +353,7 @@ struct  area
 #define A_BIT   0200            /* bit addressable space */
 
 #define A_NOLOAD  0400          /* nonloadable */
+#define A_CDATA   01000         /* sdas lisa: constant data in code space (ldi/ret pairs, 4-byte units) */
 #define A_LOAD  0000            /* loadable (default) */
 /* end sdas specific */
 

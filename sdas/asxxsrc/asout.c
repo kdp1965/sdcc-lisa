@@ -241,6 +241,33 @@
  *              Absolute data is processed.
  */
 
+/* sdas lisa specific */
+/*
+ * LISA keeps constant data in its 16-bit code space, where the core can
+ * only read it by executing it (call ix).  In a code area the data
+ * directives (.db, .dw, .ascii, ...) therefore emit an `ldi #byte ; ret`
+ * instruction pair per byte.  lisa_raw is set while lisamch.c emits
+ * instruction words and while the expansion itself runs.
+ */
+int lisa_raw = 0;
+
+static int
+lisa_code_data(void)
+{
+        return is_sdas_target_lisa() && !lisa_raw &&
+               dot.s_area != NULL && (dot.s_area->a_flag & A_CODE);
+}
+
+static VOID
+lisa_data_byte(a_uint v)
+{
+        lisa_raw++;
+        outaxb(2, 0x8000 | (v & 0xFF));         /* ldi #v */
+        outaxb(2, 0x8A00);                      /* ret    */
+        lisa_raw--;
+}
+/* end sdas lisa specific */
+
 VOID
 outab(a_uint v)
 {
@@ -294,6 +321,15 @@ VOID
 outaxb(int i, a_uint v)
 {
         int p_bytes;
+
+        /* sdas lisa specific */
+        if (lisa_code_data()) {
+                int k;
+                for (k = 0; k < i; k++)         /* little endian */
+                        lisa_data_byte(v >> (8 * k));
+                return;
+        }
+        /* end sdas lisa specific */
 
         if (pass == 2) {
                 out_lxb(i, v, 0);
@@ -467,6 +503,26 @@ outrxb(int i, struct expr *esp, int r)
         a_uint m, n;
         int p_bytes;
 
+        /* sdas lisa specific */
+        if (lisa_code_data()) {
+                int k;
+                if (esp->e_flag == 0 && esp->e_base.e_ap == NULL) {
+                        outaxb(i, esp->e_addr);
+                        return;
+                }
+                if (i > 2)
+                        xerr('a', "Only byte and word relocations in a code area.");
+                lisa_raw++;
+                for (k = 0; k < i; k++) {
+                        outrxb(1, esp, r | (k ? R_MSB : 0));    /* ldi #<sym / #>sym */
+                        outaxb(1, 0x80);
+                        outaxb(2, 0x8A00);                      /* ret */
+                }
+                lisa_raw--;
+                return;
+        }
+        /* end sdas lisa specific */
+
         if (pass == 2) {
                 if (esp->e_flag==0 && esp->e_base.e_ap==NULL) {
                         /* This is a constant; simply write the
@@ -612,6 +668,13 @@ VOID
 outrw(struct expr *esp, int r)
 {
         int n;
+
+        /* sdas lisa specific */
+        if (lisa_code_data()) {
+                outrxb(2, esp, r);
+                return;
+        }
+        /* end sdas lisa specific */
 
         if (pass == 2) {
                 /* sdas specific */

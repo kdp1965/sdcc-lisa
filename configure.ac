@@ -803,6 +803,7 @@ AC_DO_PORT_ENABLER(pdk16,    pdk,    PDK16,    [Includes the PDK16 port])
 AC_DO_PORT(mos6502,  mos6502,MOS6502,  [Includes the MOS6502 port])
 AC_DO_PORT(mos65c02, mos6502,MOS65C02, [Includes the MOS65C02 port])
 AC_DO_PORT(f8,       f8,     F8,       [Excludes the f8 port])
+AC_DO_PORT(lisa,     lisa,   LISA,     [Excludes the LISA port])
 
 # Unsupported targets
 ####AC_DO_PORT_ENABLER(avr,   avr,   AVR,   [Includes the AVR port (disabled by default)])
@@ -974,6 +975,12 @@ if test $OPT_DISABLE_F8 = 0; then
   test $OPT_DISABLE_DEVICE_LIB = 0 && AC_CONFIG_FILES([device/lib/f8/Makefile])
 fi
 
+if test $OPT_DISABLE_LISA = 0; then
+  AC_CONFIG_FILES([src/lisa/Makefile
+                   sdas/aslisa/Makefile])
+  test $OPT_DISABLE_DEVICE_LIB = 0 && AC_CONFIG_FILES([device/lib/lisa/Makefile])
+fi
+
 test $OPT_DISABLE_DEVICE_LIB = 0 && AC_CONFIG_FILES([device/lib/Makefile])
 test $OPT_DISABLE_DEVICE_LIB = 0 && test $OPT_DISABLE_NON_FREE = 0 && AC_CONFIG_FILES([device/non-free/lib/Makefile])
 
@@ -1070,6 +1077,7 @@ sdcc ${VERSION} is now configured for
     mos6502             ${enable_mos6502_port}
     mos65c02            ${enable_mos65c02_port}
     f8                  ${enable_f8_port}
+    lisa                ${enable_lisa_port}
 
   Disable non-free lib: ${OPT_DISABLE_NON_FREE}
   Disable packihx:      ${OPT_DISABLE_PACKIHX}

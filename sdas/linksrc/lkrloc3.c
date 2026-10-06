@@ -391,6 +391,69 @@ relr3(void)
                 }
 
 
+                /* sdld lisa specific */
+                /*
+                 * LISA code is counted in bytes (two per 16-bit
+                 * instruction word) but the core addresses it in
+                 * words: anything that resolves into a code area is
+                 * divided by two.  Constant data in code space (areas
+                 * flagged CDATA) takes two words per byte; a pointer to
+                 * it counts in such pairs, so those symbols are divided
+                 * by four instead - except in an `ldx` (R3_PAG0 on a
+                 * word), which wants the word address.  A `jal` field
+                 * (R3_USGN on a word) is masked to 15 bits, every other
+                 * code address gets the generic-pointer tag in bit 15.
+                 * R3_PAG on a word marks the 10-bit direct address of
+                 * lda/sta/swapi.  The field is rewritten here and reli
+                 * cleared, so the generic code below only selects bytes.
+                 */
+                if (TARGET_IS_LISA) {
+                        struct area *bap;
+                        a_uint f, v, op;
+                        int n, k, iscode, iscdata;
+
+                        if (mode & R3_SYM)
+                                bap = s[rindex]->s_axp ? s[rindex]->s_axp->a_bap : NULL;
+                        else
+                                bap = a[rindex]->a_bap;
+                        iscode = bap && (bap->a_flag & A_CODE);
+                        iscdata = iscode && (bap->a_flag & A_CDATA);
+
+                        n = (mode & R3_BYTE) ? ((mode & R3_BYTX) ? a_bytes : 1) : 2;
+                        for (f = 0, k = n; k-- > 0; )
+                                f = (f << 8) | rtval[rtp + k];
+
+                        if (!(mode & R3_BYTE) && (mode & R3_PAG)) {
+                                op = f & ~(a_uint) 0x3FF;
+                                v = reli + (f & 0x3FF);
+                                if (iscode)
+                                        error = 16;
+                                else if (v > 0x3FF)
+                                        error = 15;
+                                v = op | (v & 0x3FF);
+                                mode &= ~R3_PAG;
+                        } else {
+                                v = reli + f;
+                                if (iscode) {
+                                        if (!(mode & R3_BYTE) && (mode & R3_USGN))
+                                                v = (v >> 1) & 0x7FFF;          /* jal */
+                                        else if (!(mode & R3_BYTE) && (mode & R3_PAG0))
+                                                v = (v >> 1) | 0x8000;          /* ldx: word address */
+                                        else if (iscdata)
+                                                v = (v >> 2) | 0x8000;          /* pointer to constant data */
+                                        else
+                                                v = (v >> 1) | 0x8000;          /* function pointer */
+                                }
+                                if (!(mode & R3_BYTE))
+                                        mode &= ~(R3_USGN | R3_PAG0);
+                        }
+
+                        for (k = 0; k < n; k++)
+                                rtval[rtp + k] = (v >> (8 * k)) & 0xFF;
+                        reli = 0;
+                }
+                /* end sdld lisa specific */
+
                 /* pdk instruction fusion */
                 if (TARGET_IS_PDK) {
                         relv = adb_3b(reli, rtp);
@@ -691,7 +754,9 @@ char *errmsg3[] = {
 /* 11 */        "Invalid address for instruction",
 /* 12 */        "mismatched pdk targets; expected pdk15",
 /* 13 */        "mismatched pdk targets; expected pdk14",
-/* 14 */        "mismatched pdk targets; expected pdk13"
+/* 14 */        "mismatched pdk targets; expected pdk13",
+/* 15 */        "LISA direct address out of range (0..0x3ff)",
+/* 16 */        "LISA code address used as a data address"
 /* end sdld specific */
 };
 
