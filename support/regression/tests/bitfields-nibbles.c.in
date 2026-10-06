@@ -51,6 +51,10 @@ typedef struct
 #elif defined(__SDCC_f8)
     #define ABS_ADDR1 0x3000
     #define ABS_ADDR2 0x3004
+#elif defined(__SDCC_lisa)
+    // direct lda/sta reach 0..0x1ff; the top of that range is clear of DATA
+    #define ABS_ADDR1 0x01F0
+    #define ABS_ADDR2 0x01F4
 #else
     // TODO: Make test suitable for pdk
     // mcs51 creates invalid assembler. Don't know if that is a bug or just a bad choice for ABS_ADDR1 and ABS_ADDR2 below.

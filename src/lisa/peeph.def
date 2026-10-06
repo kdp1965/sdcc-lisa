@@ -5,21 +5,23 @@
 // if/iftt/ifte is emitted with a ".p" suffix: it is predicated and must not
 // be merged or removed, so rules only mention it explicitly.
 
+// stax does not set Z, so the reload can only go if nothing needs it
 replace restart {
 	stax	%1
 	ldax	%1
 } by {
 	stax	%1
 	; peephole 0 removed redundant ldax %1
-} if notVolatile(%1)
+} if notVolatile(%1), notUsed('z')
 
+// not in a jump table: its last entry is followed by its target label
 replace restart {
 	br	%1
 %1:
 } by {
 %1:
 	; peephole 1 removed br to next line
-}
+} if notInJumpTable()
 
 replace restart {
 	ldi	%1

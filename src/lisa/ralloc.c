@@ -644,6 +644,9 @@ lisa_assignRegisters (ebbIndex *ebbi)
      disjoint blocks share stack space */
   if (currFunc)
     redoStackOffsets ();
+  if (getenv ("LISA_DEBUG_STACK"))
+    for (symbol *sym = setFirstItem (istack->syms); sym; sym = setNextItem (istack->syms))
+      fprintf (stderr, "stk %s block %d level %ld stack %d size %d allocreq %d live %d-%d\n", sym->name, sym->block, (long) sym->level, sym->stack, getSize (sym->type), sym->allocreq, sym->liveFrom, sym->liveTo);
 
   ic = iCodeLabelOptimize (iCodeFromeBBlock (ebbs, count));
 

@@ -2493,7 +2493,7 @@ glue (void)
     }
 
   /* copy external ram data */
-  if (xdata && (mcs51_like || TARGET_MOS6502_LIKE ))
+  if (xdata && (mcs51_like || TARGET_MOS6502_LIKE || TARGET_IS_LISA))
     {
       fprintf (asmFile, "%s", iComments2);
       fprintf (asmFile, "; uninitialized external ram data\n");

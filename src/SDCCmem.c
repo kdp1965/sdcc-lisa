@@ -592,6 +592,13 @@ allocGlobal (symbol *sym)
               /* absolute initialized global */
               SPEC_OCLS (sym->etype) = x_abs;
             }
+          else if (TARGET_IS_LISA && !SPEC_ABSA (sym->etype) && getSize (sym->type) >= 64 && (!sym->ival || sym->level == 0))
+            {
+              /* lisa: the direct lda/sta forms reach 512 bytes; a big object
+                 goes to FDATA (or FINITIALIZED, with its initial values in
+                 FINITIALIZER), behind the small ones, and is reached through IX */
+              SPEC_OCLS (sym->etype) = sym->ival ? xidata : xdata;
+            }
           else if (sym->ival && sym->level == 0 && port->mem.initialized_name)
             {
               SPEC_OCLS (sym->etype) = initialized;

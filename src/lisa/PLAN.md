@@ -151,6 +151,27 @@ now models them and the generator works around them:
   signed compares against memory use `cmp` with the zero guard and a
   `btst 7` path for a zero top byte.
 
+SDCC's own regression suite (`support/regression`, `make test-lisa`,
+~6000 cases, ~31k test points on lisa_sim) runs on the port as of
+2026-10-06 with a few dozen failures left, all frames over 511 bytes or
+addresses outside the 32K data space (listed in `MakeList` as
+`EXCLUDE_lisa`).  Getting there fixed: ldx hoisted out of predicated pairs
+(ldx is two words - a skipped ldx executes its literal), the borrow
+convention of zero-extension bytes in subtractions, struct arguments
+(IPUSH_VALUE_AT_ADDRESS), bit fields (read, write, _BitInt padding), the
+result/operand slot sharing that SDCC's allocator allows (shift count read
+after the result was written; aopSame beyond an operand's size), literal
+generic pointers (ldx cannot carry bit 15: the space is decided at compile
+time), float negation (sign bit, not two's complement) and float truth
+tests (-0.0), signed literal bytes beyond the literal's size, symbol
+addresses in subtractions (no ~sym relocation), code-pointer offsets in
+initializers (scaled by 4), setjmp/longjmp, atomic_flag, malloc's heap,
+__critical, calls through constants, lldiv and the char multiply helpers,
+and a peephole that dropped a reload whose Z flag was still needed
+(`lisaNotUsed` now tracks Z/C liveness for the rules).  Memory layout: big
+objects (>= 64 bytes, or `__xdata`) go to FDATA / FINITIALIZED behind the
+directly addressed data and are reached through IX.
+
 Not done / next:
 * Code quality: keep short-lived temporaries in A (the pdk-style
   tree-decomposition allocator with a dry-run cost model is the plan;

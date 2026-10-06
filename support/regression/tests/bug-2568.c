@@ -16,6 +16,8 @@
 #define ADDR 0x3800
 #elif defined(__SDCC_pdk14) || defined(__SDCC_pdk15)
 #define ADDR 0x70
+#elif defined(__SDCC_lisa)
+#define ADDR 0x1000
 #else
 #define ADDR 0xca00
 #endif

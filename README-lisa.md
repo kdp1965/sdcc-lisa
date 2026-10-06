@@ -54,6 +54,40 @@ build/bin/sdcc -mlisa -o prog.ihx prog.c          # Intel HEX, byte addresses = 
   of the TT07 board with the cache disabled; data starts at 0.
 * The library is a plain object list (`lisa.lib` + `.rel` files), because
   `sdar` lives in the disabled sdbinutils.
+* Memory: the direct `lda`/`sta` forms reach data 0..0x1ff, so small
+  globals live in `DATA`/`INITIALIZED` there; uninitialized objects of 64
+  bytes or more (and anything declared `__xdata`) go to `FDATA` behind them
+  and are addressed through IX. An `__at` object beyond 0x1ff is addressed
+  through IX too. A function's frame (locals, spill slots, pushed
+  arguments) is limited to 511 bytes (`n(sp)` has a 9-bit offset).
+* Code-space constants: `const` globals live in code space as `ldi/ret`
+  pairs (two words per byte); a pointer to them is the pair index with bit
+  15 set, which is what the generic-pointer code tests at run time.
+  Constant data initializers that point into code space are scaled
+  accordingly (`src/SDCCval.c`, `lisaCodeScale`).
+
+## Regression testing
+
+SDCC's own suite (`support/regression`, ~1650 test files, ~6000 generated
+cases, ~100k test points) runs on `lisa_sim`:
+
+```sh
+cd build/support/regression
+make test-lisa                      # whole suite, ~6 minutes with -j8
+make test-lisa TEST_PREFIX=bitfields # one family
+cat results/lisa.sum                # summary; results/lisa/<test>.out has the details
+```
+
+`ports/lisa/spec.mk` points at `../lisa_sim/lisa_sim` (override with
+`LISA_SIM=`), runs with `--stack-loc 0x7fff` (the simulator has 32K of data)
+and `_exitEmu()` executes `brk`, which halts the simulator. The Makefile only
+tracks the test sources: after changing the compiler or the library,
+`rm -rf gen/lisa results/lisa` first. Tests that cannot fit the port (frames
+over 511 bytes, addresses outside the 32K data space) are listed in
+`support/regression/MakeList` under `EXCLUDE_lisa`.
+
+The smaller, chip-sized suite is `../sdcc_test` (`make check`); its
+`test_regress.c` collects the bugs the big suite found.
 
 ## Layout of the port
 
@@ -62,5 +96,6 @@ build/bin/sdcc -mlisa -o prog.ihx prog.c          # Intel HEX, byte addresses = 
 | compiler back end | `src/lisa/{main.c,gen.c,ralloc.c,peeph.def}` |
 | assembler | `sdas/aslisa/{lisa.h,lisaadr.c,lisamch.c,lisapst.c}`, data-in-code expansion in `sdas/asxxsrc/asout.c`, `.p` suffix in `asmain.c` |
 | linker | `sdas/linksrc/lkrloc3.c` (LISA relocation rules), `lkarea.c` (code/data spaces, CDATA alignment, `s_<area>` symbols) |
-| library | `device/lib/lisa/Makefile.in`, `device/include/stdarg.h` |
-| generic hooks | `src/SDCCglue.c` (program startup jumps, sfr table), `src/SDCCsymt.c` (8-bit div/mod helpers return int), `src/port.h`, `src/SDCCmain.c`, `configure.ac`, `Makefile.in`, `device/lib/Makefile.in` |
+| library | `device/lib/lisa/{Makefile.in,setjmp.s,atomic_flag_test_and_set.s,heap.s}`, `device/include/stdarg.h`, `setjmp.h`, `stdatomic.h` |
+| regression port | `support/regression/ports/lisa/{spec.mk,support.c}`, `fwk/include/testfwk.h` (`__SDCC_lisa`), LISA addresses in `tests/bitfields-*.c.in`, `tests/absolute.c.in` |
+| generic hooks | `src/SDCCglue.c` (program startup jumps, sfr table, FDATA), `src/SDCCsymt.c` (8-bit div/mod helpers return int; `__at` objects stay in data), `src/SDCCmem.c` (big objects to FDATA), `src/SDCCval.c` (code-pointer offset scaling), `src/port.h`, `src/SDCCmain.c`, `configure.ac`, `Makefile.in`, `device/lib/Makefile.in`, `device/lib/malloc.c` (lazy heap init) |

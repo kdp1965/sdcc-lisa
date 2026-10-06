@@ -417,3 +417,23 @@ EXCLUDE_uc65c02 += ${EXCLUDE_ARCH_mos6502}
 EXCLUDE_uc6502-stack-auto += ${EXCLUDE_ARCH_mos6502}
 ###################################################
 
+
+# lisa: n(sp) has a 9-bit offset, so a function's frame (locals, spill
+# slots, pushed arguments) is limited to 511 bytes. These need more.
+EXCLUDE_lisa += \
+	bigstack \
+	stack-restore \
+	coremark \
+	gte_loop-ivopts-2 \
+	tst_bug-3296 \
+	tst_sha3-256 \
+	tst_lonesha256 \
+	tst_gcc-torture-execute-usad-run \
+	tst_gcc-torture-execute-ssad-run \
+	tst_gcc-torture-execute-990513-1 \
+	tst_gcc-torture-execute-930614-2 \
+	tst_gcc-torture-execute-930406-1 \
+	tst_gcc-torture-execute-20100430-1 \
+	tst_gcc-torture-execute-20071030-1 \
+	tst_gcc-torture-execute-20031012-1 \
+	tst_gcc-torture-execute-20030916-1

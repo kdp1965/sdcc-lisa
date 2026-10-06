@@ -34,6 +34,7 @@ static char lisa_defaultRules[] = {
 static char *lisa_keywords[] = {
   "at",
   "code",
+  "critical",
   "data",
   "interrupt",
   "naked",
@@ -52,11 +53,24 @@ lisa_genAssemblerStart (FILE *of)
   fprintf (of, "\n; default segment ordering in RAM for linker\n");
   tfprintf (of, "\t!area\n", DATA_NAME);
   tfprintf (of, "\t!area\n", OVERLAY_NAME);
+  tfprintf (of, "\t!area\n", port->mem.initialized_name);
+  tfprintf (of, "\t!area\n", XDATA_NAME);
+  tfprintf (of, "\t!area\n", XIDATA_NAME);
   fprintf (of, "\n");
 }
 
 static void
 lisa_genAssemblerEnd (FILE *of)
+{
+  /* declared in every module so that the linker always defines s_/l_
+     for the startup copy loop; last, so that it stays behind the code */
+  tfprintf (of, "\t!area\n", "FINITIALIZER (CODE,CDATA)");
+}
+
+/* The generic code uses this only as a flag (xidata/xinit exist); the
+   copy FINITIALIZER -> FINITIALIZED is part of lisa_genInitStartup. */
+static void
+lisa_genXINIT (FILE *of)
 {
 }
 
@@ -123,6 +137,25 @@ lisa_genInitStartup (FILE *of)
   fprintf (of, "\tbr\t00001$\n");
   fprintf (of, "00002$:\n");
 
+  /* Zero FDATA the same way, reusing the count slots */
+  fprintf (of, "\tldi\t#>l_FDATA\n");
+  fprintf (of, "\tstax\t2(sp)\n");
+  fprintf (of, "\tldi\t#<l_FDATA\n");
+  fprintf (of, "\tstax\t1(sp)\n");
+  fprintf (of, "\tldx\t#s_FDATA\n");
+  fprintf (of, "00005$:\n");
+  fprintf (of, "\tldax\t1(sp)\n");
+  fprintf (of, "\tor\t2(sp)\n");
+  fprintf (of, "\tbz\t00006$\n");
+  fprintf (of, "\tldi\t#0\n");
+  fprintf (of, "\tstax\t0(ix)\n");
+  fprintf (of, "\tadx\t#1\n");
+  fprintf (of, "\tdcx\t1(sp)\n");
+  fprintf (of, "\tif\tc\n");
+  fprintf (of, "\tdcx\t2(sp)\n");
+  fprintf (of, "\tbr\t00005$\n");
+  fprintf (of, "00006$:\n");
+
   /* Copy INITIALIZER -> INITIALIZED: source in IX (code, call ix reads a
      byte), destination pointer in 4(sp):3(sp), count in 2(sp):1(sp). */
   fprintf (of, "\tldi\t#>s_INITIALIZED\n");
@@ -152,6 +185,35 @@ lisa_genInitStartup (FILE *of)
   fprintf (of, "\tdcx\t4(sp)\n");
   fprintf (of, "\tbr\t00003$\n");
   fprintf (of, "00004$:\n");
+
+  /* the same for FINITIALIZER -> FINITIALIZED, reusing the slots */
+  fprintf (of, "\tldi\t#>s_FINITIALIZED\n");
+  fprintf (of, "\tstax\t2(sp)\n");
+  fprintf (of, "\tldi\t#<s_FINITIALIZED\n");
+  fprintf (of, "\tstax\t1(sp)\n");
+  fprintf (of, "\tldi\t#>l_FINITIALIZED\n");
+  fprintf (of, "\tstax\t4(sp)\n");
+  fprintf (of, "\tldi\t#<l_FINITIALIZED\n");
+  fprintf (of, "\tstax\t3(sp)\n");
+  fprintf (of, "\tldx\t#s_FINITIALIZER\n");
+  fprintf (of, "00007$:\n");
+  fprintf (of, "\tldax\t3(sp)\n");
+  fprintf (of, "\tor\t4(sp)\n");
+  fprintf (of, "\tbz\t00008$\n");
+  fprintf (of, "\tcall\tix\n");
+  fprintf (of, "\tadx\t#1\n");
+  fprintf (of, "\tpush\tix\n");
+  fprintf (of, "\tldxx\t3(sp)\n");
+  fprintf (of, "\tstax\t0(ix)\n");
+  fprintf (of, "\tinx\t3(sp)\n");
+  fprintf (of, "\tif\tc\n");
+  fprintf (of, "\tinx\t4(sp)\n");
+  fprintf (of, "\tpop\tix\n");
+  fprintf (of, "\tdcx\t3(sp)\n");
+  fprintf (of, "\tif\tc\n");
+  fprintf (of, "\tdcx\t4(sp)\n");
+  fprintf (of, "\tbr\t00007$\n");
+  fprintf (of, "00008$:\n");
   fprintf (of, "\tads\t#4\n");
 }
 
@@ -191,6 +253,7 @@ lisa_setDefaultOptions (void)
 {
   options.out_fmt = 'i';        /* Default output format is ihx */
   options.data_loc = 0x0000;
+  options.xdata_loc = 0;        /* FDATA follows the DATA areas (0: linker places it) */
   options.code_loc = 0x0000;
   options.stack_loc = -1;       /* default: below the end of the DATA areas (s_SSEG) */
   options.nopeep = 0;
@@ -215,8 +278,15 @@ _hasNativeMulFor (iCode *ic, sym_link *left, sym_link *right)
   if (IS_BITINT (OP_SYM_TYPE (IC_RESULT (ic))) && SPEC_BITINTWIDTH (OP_SYM_TYPE (IC_RESULT (ic))) % 8)
     return false;
 
-  /* mul / mulu give an 8x8 -> 16 product in one instruction each */
-  return (result_size <= 2 && getSize (left) <= 2 && getSize (right) <= 2);
+  /* mul / mulu give an 8x8 -> 16 product in one instruction each; a
+     16-bit product of two 8-bit operands needs them to agree in
+     signedness (otherwise one of them must be extended first) */
+  if (result_size > 2 || getSize (left) > 2 || getSize (right) > 2)
+    return (false);
+  if (result_size == 2 && getSize (left) == 1 && getSize (right) == 1 &&
+      !!SPEC_USIGN (left) != !!SPEC_USIGN (right))
+    return (false);
+  return (true);
 }
 
 /* Indicate which extended bit operations this backend supports */
@@ -288,7 +358,7 @@ PORT lisa_port =
     0,
     0,
     0,
-    0,
+    lisaNotUsed,
     0,
     0,
     0,
@@ -318,15 +388,15 @@ PORT lisa_port =
     "DATA",                     /* data */
     NULL,                       /* idata */
     NULL,                       /* pdata */
-    NULL,                       /* xdata */
+    "FDATA",                    /* xdata: data beyond the 9-bit direct range, through IX */
     NULL,                       /* bit */
     "RSEG (ABS)",               /* reg */
     "GSINIT (CODE)",            /* static initialization */
     "OSEG (OVR,DATA)",          /* overlay */
     "GSFINAL (CODE)",           /* gsfinal */
     "HOME (CODE)",              /* home */
-    NULL,                       /* xidata */
-    NULL,                       /* xinit */
+    "FINITIALIZED",             /* xidata: big initialized objects, through IX */
+    "FINITIALIZER (CODE,CDATA)", /* xinit: their initial values in code space */
     "CONST (CODE,CDATA)",       /* const_name */
     "CABS (ABS,CODE,CDATA)",    /* cabs_name */
     "DABS (ABS)",               /* xabs_name */
@@ -386,7 +456,7 @@ PORT lisa_port =
   lisa_genAssemblerStart,
   lisa_genAssemblerEnd,
   lisa_genIVT,
-  0,                            /* no genXINIT code */
+  lisa_genXINIT,                /* genXINIT: only a flag here, the startup copies FINITIALIZER */
   lisa_genInitStartup,          /* genInitStartup */
   lisa_reset_regparm,
   lisa_reg_parm,

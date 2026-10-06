@@ -24,6 +24,19 @@
 -------------------------------------------------------------------------*/
 
 #include "common.h"
+
+/* lisa: constant data in code space takes two words (four assembler bytes)
+   per C byte, so a byte offset added to the address of such an object in
+   an initializer is scaled by four */
+static int
+lisaCodeScale (sym_link *type, int offset)
+{
+  if (!TARGET_IS_LISA)
+    return offset;
+  if (IS_PTR (type) ? DCL_TYPE (type) == CPOINTER : SPEC_SCLS (type) == S_CODE)
+    return offset * 4;
+  return offset;
+}
 #include <math.h>
 #include <stdlib.h>
 #include <limits.h>
@@ -3377,13 +3390,13 @@ valForArray (ast * arrExpr)
     }
   else if (lval)
     {
-      SNPRINTF (val->name, sizeof (val->name), "(%s + %d)", lval->name, AST_ULONG_VALUE (arrExpr->right) * size);
+      SNPRINTF (val->name, sizeof (val->name), "(%s + %d)", lval->name, lisaCodeScale (lval->type, AST_ULONG_VALUE (arrExpr->right) * size));
       memcpy (val->type, lval->type, sizeof (sym_link));
     }
   else
     {
       SNPRINTF (val->name, sizeof (val->name), "(%s + %d)",
-                AST_SYMBOL (arrExpr->left)->rname, AST_ULONG_VALUE (arrExpr->right) * size);
+                AST_SYMBOL (arrExpr->left)->rname, lisaCodeScale (arrExpr->left->etype, AST_ULONG_VALUE (arrExpr->right) * size));
       if (SPEC_SCLS (arrExpr->left->etype) == S_CODE)
         DCL_TYPE (val->type) = CPOINTER;
       else if (SPEC_SCLS (arrExpr->left->etype) == S_XDATA)
@@ -3477,15 +3490,15 @@ valForStructElem (ast * structT, ast * elemT)
     }
   else if (lval)
     {
-      SNPRINTF (val->name, sizeof (val->name), "(%s + %d)", lval->name, (int) sym->offset);
+      SNPRINTF (val->name, sizeof (val->name), "(%s + %d)", lval->name, lisaCodeScale (lval->type, (int) sym->offset));
       memcpy (val->type, lval->type, sizeof (sym_link));
     }
   else
     {
       if (sast)
-        SNPRINTF (val->name, sizeof (val->name), "(%s + (%d))", AST_SYMBOL (sast)->rname, ((int) sym->offset) + idxoff);
+        SNPRINTF (val->name, sizeof (val->name), "(%s + (%d))", AST_SYMBOL (sast)->rname, lisaCodeScale (structT->etype, ((int) sym->offset) + idxoff));
       else
-        SNPRINTF (val->name, sizeof (val->name), "(%s + %d)", AST_SYMBOL (structT)->rname, (int) sym->offset);
+        SNPRINTF (val->name, sizeof (val->name), "(%s + %d)", AST_SYMBOL (structT)->rname, lisaCodeScale (structT->etype, (int) sym->offset));
 
       if (SPEC_SCLS (structT->etype) == S_CODE)
         DCL_TYPE (val->type) = CPOINTER;

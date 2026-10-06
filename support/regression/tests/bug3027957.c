@@ -10,6 +10,8 @@
 #define ADDRESS 0x3000
 #elif defined(__SDCC_pic14)
 #define ADDRESS 0x01A0
+#elif defined(__SDCC_lisa)
+#define ADDRESS 0x1000
 #else
 #define ADDRESS 0xF000
 #endif

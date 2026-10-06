@@ -68,6 +68,7 @@ static struct
 G;
 
 static void adjustStack (int n);
+static unsigned char litByte (const asmop *aop, int offset);
 static void loadA (const asmop *aop, int offset);
 
 static struct asmop asmop_a, asmop_zero, asmop_one, asmop_mone;
@@ -202,6 +203,9 @@ aopSame (const asmop *aop1, int offset1, const asmop *aop2, int offset2, int siz
 {
   for(; size; size--, offset1++, offset2++)
     {
+      /* a byte beyond an operand is its zero extension, never "the same" */
+      if (offset1 >= aop1->size || offset2 >= aop2->size)
+        return (false);
       if (aop1->type == AOP_REG && aop2->type == AOP_REG &&
         aop1->aopu.bytes[offset1].in_reg && aop2->aopu.bytes[offset2].in_reg &&
         aop1->aopu.bytes[offset1].byteu.reg == aop2->aopu.bytes[offset2].byteu.reg)
@@ -234,6 +238,13 @@ aopIsLitVal (const asmop *aop, int offset, int size, unsigned long long int val)
       unsigned char b = val & 0xff;
       val >>= 8;
 
+      // Bytes beyond a literal's size: its sign extension
+      if (aop->size <= offset && aop->type == AOP_LIT)
+        {
+          if (litByte (aop, offset) != b)
+            return (false);
+          continue;
+        }
       // Leading zeroes
       if (aop->size <= offset && !b)
         continue;
@@ -265,9 +276,17 @@ stkOffset (const asmop *aop, int offset)
   stk = (offset < 8 ? aop->aopu.bytes[offset].byteu.stk : aop->aopu.bytes[0].byteu.stk + offset) + G.stack.pushed;
   if (!regalloc_dry_run && (stk < 0 || stk > 511))
     {
-      fprintf (stderr, "stack offset %d\n", stk);
-      if (!getenv ("SDCC_LISA_NOASSERT"))
-        wassertl_bt (0, "Stack offset out of range (0..511).");
+      /* n(sp) has a 9-bit offset: the frame (locals, spill slots, pushed
+         arguments) of one function cannot exceed 511 bytes.  Reported once
+         per function. */
+      static symbol *reported;
+      if (reported != currFunc)
+        {
+          reported = currFunc;
+          werror (E_STACK_OUT, currFunc ? currFunc->name : "?");
+          fprintf (stderr, "lisa: the frame of a function (locals, spill slots and pushed arguments) is limited to 511 bytes, the n(sp) offset field is 9 bits\n");
+        }
+      return (stk < 0 ? 0 : 511);
     }
   return (stk);
 }
@@ -294,12 +313,26 @@ dirArg (const asmop *aop, int offset)
   return (buffer);
 }
 
+/* A byte of a literal operand; beyond its size byteOfVal gives the sign
+   extension (a narrow signed literal added to a wider operand). */
+static unsigned char
+litByte (const asmop *aop, int offset)
+{
+  wassert_bt (aop->type == AOP_LIT);
+  return (byteOfVal (aop->aopu.aop_lit, offset));
+}
+
 /* Immediate byte text: literal, or a byte of a symbol address. */
 static const char *
 immArg (const asmop *aop, int offset)
 {
   static char buffer[256];
 
+  if (aop->type == AOP_LIT)
+    {
+      SNPRINTF (buffer, sizeof (buffer), "#0x%02x", litByte (aop, offset));
+      return (buffer);
+    }
   if (offset >= aop->size)
     return ("#0x00");
   if (aop->type == AOP_LIT)
@@ -406,6 +439,11 @@ aopForSym (const iCode *ic, symbol *sym)
           aop->aopu.immd_off = 0;
           aop->aopu.code = (aop->type == AOP_CODE);
           aop->size = getSize (sym->type);
+          /* lda/sta reach 0..0x1ff; FDATA (big objects, __xdata) and an
+             __at object beyond that go through IX */
+          aop->aopu.far = (aop->type == AOP_DIR &&
+                           (IN_FARSPACE (SPEC_OCLS (sym->etype)) ||
+                            SPEC_ABSA (sym->etype) && SPEC_ADDR (sym->etype) + aop->size > 0x200));
         }
     }
 
@@ -470,6 +508,10 @@ aopForRemat (symbol *sym)
       aop->aopu.immd_off = val;
       aop->aopu.code = IN_CODESPACE (SPEC_OCLS (OP_SYMBOL (IC_LEFT (ic))->etype));
       aop->aopu.func = IS_FUNC (OP_SYMBOL (IC_LEFT (ic))->type);
+      /* the address of FDATA or of an __at object beyond the direct range */
+      aop->aopu.far = !aop->aopu.code &&
+                      (IN_FARSPACE (SPEC_OCLS (OP_SYMBOL (IC_LEFT (ic))->etype)) ||
+                       SPEC_ABSA (OP_SYMBOL (IC_LEFT (ic))->etype) && SPEC_ADDR (OP_SYMBOL (IC_LEFT (ic))->etype) + val >= 0x200);
     }
 
   aop->size = getSize (sym->type);
@@ -623,7 +665,7 @@ ixLoadStackAddr (int stk_off)
 static void
 loadA (const asmop *aop, int offset)
 {
-  if (offset >= aop->size && aop->type != AOP_STL)
+  if (offset >= aop->size && aop->type != AOP_STL && aop->type != AOP_LIT)
     {
       emit2 ("ldi", "#0x00");
       cost (1, 1);
@@ -645,6 +687,16 @@ loadA (const asmop *aop, int offset)
       break;
     case AOP_DIR:
     case AOP_SFR:
+      if (aop->aopu.far)
+        {
+          /* through IX, which may be in use: save it around the access */
+          emit2 ("push", "ix");
+          emit2 ("ldx", "#%s", aop->aopu.immd);
+          emit2 ("ldax", "%d(ix)", aop->aopu.immd_off + offset);
+          emit2 ("pop", "ix");
+          cost (5, 7);
+          break;
+        }
       emit2 ("lda", "%s", dirArg (aop, offset));
       cost (1, 1);
       break;
@@ -692,12 +744,16 @@ loadA (const asmop *aop, int offset)
     }
 }
 
+static void ixNoteStore (const asmop *aop, int offset);
+
 /* aop[offset] <- A */
 static void
 storeA (const asmop *aop, int offset)
 {
   if (offset >= aop->size)
     return;
+  /* the store may hit the bytes IX was loaded from */
+  ixNoteStore (aop, offset);
   switch (aop->type)
     {
     case AOP_REG:
@@ -709,6 +765,15 @@ storeA (const asmop *aop, int offset)
       break;
     case AOP_DIR:
     case AOP_SFR:
+      if (aop->aopu.far)
+        {
+          emit2 ("push", "ix");
+          emit2 ("ldx", "#%s", aop->aopu.immd);
+          emit2 ("stax", "%d(ix)", aop->aopu.immd_off + offset);
+          emit2 ("pop", "ix");
+          cost (5, 7);
+          break;
+        }
       emit2 ("sta", "%s", dirArg (aop, offset));
       cost (1, 1);
       break;
@@ -740,6 +805,15 @@ memArg (const asmop *aop, int offset)
   return (buffer);
 }
 
+/* Load IX for a data-memory operand ahead of a predicated instruction, so
+   the ldx is not emitted inside the predicated pair (ldx leaves Z and C). */
+static void
+prepareMem (const asmop *aop, int offset)
+{
+  if (aop->type == AOP_DIR && offset < aop->size)
+    ixLoadSym (aop, 0);
+}
+
 /* A <- A op aop[offset] for op in add/sub/and/or/xor/cmp (memory forms).
    Literal operands: add -> adc #, sub -> adc #~ (caller sets the carry
    convention), and -> andi, or -> andi/adc trick, cmp -> cpi.  Operands
@@ -761,7 +835,7 @@ emitAluA (const char *op, const asmop *aop, int offset)
       else if (!strcmp (op, "sub"))
         {
           /* A - imm - borrow == A + ~imm + !borrow; the chain keeps C = !borrow */
-          unsigned char b = (aop->type == AOP_LIT && offset < aop->size) ? byteOfVal (aop->aopu.aop_lit, offset) : 0;
+          unsigned char b = (aop->type == AOP_LIT) ? litByte (aop, offset) : 0;
           if (aop->type == AOP_LIT || offset >= aop->size)
             emit2 ("adc", "#0x%02x", (~b) & 0xff);
           else
@@ -774,7 +848,7 @@ emitAluA (const char *op, const asmop *aop, int offset)
       else if (!strcmp (op, "or") && aop->type == AOP_LIT)
         {
           /* A | k == (A & ~k) + k */
-          unsigned char b = offset < aop->size ? byteOfVal (aop->aopu.aop_lit, offset) : 0;
+          unsigned char b = litByte (aop, offset);
           emit2 ("andi", "#0x%02x", (~b) & 0xff);
           emit2 ("ldc", "#0");
           emit2 ("adc", "#0x%02x", b);
@@ -904,6 +978,24 @@ loadOrBytes (const asmop *aop, int size)
   loadA (aop, 0);
   for (int i = 1; i < size; i++)
     emitAluA ("or", aop, i);
+}
+
+/* The truth value of an operand into Z: like loadOrBytes, but a float
+   ignores its sign bit so that -0.0 is false too. */
+static void
+loadTruth (const operand *op)
+{
+  const asmop *aop = op->aop;
+  if (IS_FLOAT (operandType (op)) && aop->size == 4)
+    {
+      loadA (aop, 3);
+      emit2 ("andi", "#0x7f");
+      cost (1, 1);
+      for (int i = 0; i < 3; i++)
+        emitAluA ("or", aop, i);
+    }
+  else
+    loadOrBytes (aop, aop->size);
 }
 
 /* amode: baseline 1 (shift through carry). Signed compares etc. use 3. */
@@ -1239,6 +1331,13 @@ genCall (const iCode *ic)
       emit2 ("call", "ix");
       cost (1, 3);
     }
+  else if (IS_OP_LITERAL (left))
+    {
+      /* a call through a constant: the word address in IX */
+      emit2 ("ldx", "#0x%04x", (unsigned) operandLitValue (left) & 0x7fff);
+      emit2 ("call", "ix");
+      cost (3, 5);
+    }
   else
     {
       emit2 ("jal", "%s", OP_SYMBOL (left)->rname);
@@ -1326,6 +1425,9 @@ emitAddByteMem (const asmop *raop, int i, bool keep_carry)
 {
   emit2 ("adc", "#0x00");
   cost (1, 1);
+  /* the zero extension of a narrower operand: the carry in was all */
+  if (i >= raop->size)
+    return;
   if (keep_carry)
     {
       emit2 ("savec", "");
@@ -1359,6 +1461,35 @@ loadAKeepC (const asmop *laop, int i)
 }
 
 /* result = left +/- right, byte-wise. */
+/* A _BitInt whose width is not a multiple of 8 keeps its padding bits
+   zero (unsigned) or sign-filled (signed); fix the top byte of a result
+   after an operation that may have carried into them. */
+static void
+fixBitIntResult (const iCode *ic, bool sign_extend)
+{
+  operand *result = IC_RESULT (ic);
+  sym_link *rtype = operandType (result);
+  if (!IS_BITINT (rtype) || !(SPEC_BITINTWIDTH (rtype) % 8) || !result->aop || result->aop->type == AOP_DUMMY)
+    return;
+  int bits = SPEC_BITINTWIDTH (rtype) % 8;
+  unsigned mask = 0xff >> (8 - bits);
+  if (!SPEC_USIGN (rtype) && !sign_extend)
+    return;                      /* signed overflow is undefined anyway */
+  loadA (result->aop, result->aop->size - 1);
+  emit2 ("andi", "#0x%02x", mask);
+  cost (1, 1);
+  if (!SPEC_USIGN (rtype))
+    {
+      /* the masked bits are zero, so adding the high mask is an or */
+      emit2 ("ldc", "#0");
+      emit2 ("btst", "%d", bits - 1);
+      emit2 ("if", "z");
+      emit2 ("adc", "#0x%02x", ~mask & 0xff);
+      cost (4, 4);
+    }
+  storeA (result->aop, result->aop->size - 1);
+}
+
 static void
 genAddSub (const iCode *ic, bool sub)
 {
@@ -1377,6 +1508,31 @@ genAddSub (const iCode *ic, bool sub)
   if (!sub && (laop->type == AOP_LIT || laop->type == AOP_IMMD) && raop->type != AOP_LIT && raop->type != AOP_IMMD)
     {
       asmop *t = laop; laop = raop; raop = t;
+    }
+
+  /* subtracting a symbol address (the linker cannot relocate ~sym), the
+     address of a stack object or code space data: the bytes go onto the
+     stack first and are subtracted as memory - the sub sequences are
+     predicated and cannot hold the multi-instruction loads */
+  asmop immd_tmp;
+  int immd_pushed = 0;
+  if (sub && raop->type != AOP_LIT && !aopIsMem (raop, 0) && raop->type != AOP_DUMMY)
+    {
+      int n = raop->type == AOP_STL ? 2 : raop->size;
+      if (n > size)
+        n = size;
+      for (int i = n - 1; i >= 0; i--)
+        {
+          loadA (raop, i);
+          pushA ();
+        }
+      memset (&immd_tmp, 0, sizeof (immd_tmp));
+      immd_tmp.type = AOP_STK;
+      immd_tmp.size = n;
+      for (int i = 0; i < n; i++)
+        immd_tmp.aopu.bytes[i].byteu.stk = 1 + i - G.stack.pushed;
+      raop = &immd_tmp;
+      immd_pushed = n;
     }
 
   bool litright = (raop->type == AOP_LIT || raop->type == AOP_IMMD);
@@ -1424,7 +1580,7 @@ genAddSub (const iCode *ic, bool sub)
               loadAKeepC (laop, i);
               if (litright)
                 {
-                  unsigned char k = (raop->type == AOP_LIT && i < raop->size) ? byteOfVal (raop->aopu.aop_lit, i) : 0;
+                  unsigned char k = (raop->type == AOP_LIT) ? litByte (raop, i) : 0;
                   if (k == 0xff && raop->type == AOP_LIT && !last)
                     {
                       /* k + C would be 0x100: when C is set the byte is unchanged and C stays */
@@ -1446,7 +1602,7 @@ genAddSub (const iCode *ic, bool sub)
       if (litright)
         {
           /* A + ~k + C, C = 1 means no borrow */
-          unsigned char k = (raop->type == AOP_LIT && i < raop->size) ? byteOfVal (raop->aopu.aop_lit, i) : 0;
+          unsigned char k = (raop->type == AOP_LIT) ? litByte (raop, i) : 0;
           if (i == 0)
             {
               loadA (laop, 0);
@@ -1485,7 +1641,31 @@ genAddSub (const iCode *ic, bool sub)
         }
 
       /* memory operand: sub M, C = borrow.  Wrong only when M == 0 and no borrow in. */
-      if (last && i == 0)
+      if (i >= raop->size)
+        {
+          /* the zero extension of a narrower operand: A - borrow, with the
+             borrow convention of the memory sub (C = 1 means borrow) */
+          loadAKeepC (laop, i);
+          if (last)
+            {
+              emit2 ("if", "c");
+              emit2 ("adc", "#0xfe");                  /* C = 1: adds 0xff */
+              cost (2, 2);
+            }
+          else
+            {
+              /* borrow out = borrow in && old A == 0 (== new A == 0xff) */
+              emit2 ("savec", "");
+              emit2 ("if", "c");
+              emit2 ("adc", "#0xfe");
+              emit2 ("cpi", "#0xff");
+              emit2 ("restc", "");
+              emit2 ("if", "nz");
+              emit2 ("ldc", "#0");
+              cost (7, 7);
+            }
+        }
+      else if (last && i == 0)
         {
           loadA (laop, 0);
           emit2 ("ldc", "#0");
@@ -1504,6 +1684,7 @@ genAddSub (const iCode *ic, bool sub)
           emit2 ("cpi", "#0x01");
           cost (1, 1);
           loadAKeepC (laop, 0);
+          prepareMem (raop, 0);
           emit2 ("ifte", "nc");
           emitAluA ("sub", raop, 0);
           emit2 ("ldc", "#0");
@@ -1524,6 +1705,7 @@ genAddSub (const iCode *ic, bool sub)
           emit2 ("restc", "");
           cost (1, 1);
           loadAKeepC (laop, i);
+          prepareMem (raop, i);
           emit2 ("if", "c");
           emitAluA ("sub", raop, i);                   /* M == 0: only with a borrow in (then it is right) */
           cost (1, 1);
@@ -1539,6 +1721,9 @@ genAddSub (const iCode *ic, bool sub)
     }
 
 release:
+  if (immd_pushed)
+    adjustStack (immd_pushed);
+  fixBitIntResult (ic, false);
   freeAsmop (left);
   freeAsmop (right);
   freeAsmop (result);
@@ -1572,6 +1757,25 @@ genUminus (const iCode *ic)
   aopOp (left, ic);
   aopOp (result, ic);
 
+  /* float: flip the sign bit */
+  if (IS_FLOAT (operandType (left)))
+    {
+      int size = result->aop->size;
+      for (int i = 0; i < size - 1; i++)
+        cheapMove (result->aop, i, left->aop, i);
+      loadA (left->aop, size - 1);
+      /* A ^ 0x80 through the stack: xor has no immediate form */
+      emit2 ("push", "a");
+      emit2 ("ldi", "#0x80");
+      emit2 ("xor", "1(sp)");
+      emit2 ("ads", "#1");
+      cost (4, 4);
+      storeA (result->aop, size - 1);
+      freeAsmop (left);
+      freeAsmop (result);
+      return;
+    }
+
   for (int i = 0; i < result->aop->size; i++)
     {
       if (i)
@@ -1581,7 +1785,9 @@ genUminus (const iCode *ic)
         }
       emit2 ("ldi", "#0xff");
       cost (1, 1);
-      emitAluA ("sub", left->aop, i);              /* A = ~x (C = 0 from ldi; the flag is garbage) */
+      if (i < left->aop->size)
+        emitAluA ("sub", left->aop, i);            /* A = ~x (C = 0 from ldi; the flag is garbage) */
+      /* else: the zero extension, ~0 is the 0xff already in A */
       if (i)
         emit2 ("restc", "");
       else
@@ -1591,6 +1797,7 @@ genUminus (const iCode *ic)
       storeA (result->aop, i);
     }
 
+  fixBitIntResult (ic, false);
   freeAsmop (left);
   freeAsmop (result);
 }
@@ -1636,7 +1843,7 @@ genNot (const iCode *ic)
   aopOp (left, ic);
   aopOp (result, ic);
 
-  loadOrBytes (left->aop, left->aop->size);
+  loadTruth (left);
   emit2 ("ldac", "eq");
   cost (1, 1);
   storeA (result->aop, 0);
@@ -1675,8 +1882,9 @@ genBitwise (const iCode *ic, const char *op, iCode *ifx)
       asmop *t = laop; laop = raop; raop = t;
     }
 
-  /* bit test used by an if: and with a literal, result unused */
-  if (ifx && !strcmp (op, "and") && !resultUsed (ic))
+  /* bit test used by an if: and with a literal, result unused (or marked
+     as a condition by the allocator, then it has no storage at all) */
+  if (ifx && !strcmp (op, "and") && (result->aop->type == AOP_CND || !resultUsed (ic)))
     {
       /* OR together the bytes of (left & right) that can be nonzero */
       bool first = true;
@@ -1713,7 +1921,7 @@ genBitwise (const iCode *ic, const char *op, iCode *ifx)
     {
       if (raop->type == AOP_LIT)
         {
-          unsigned char b = i < raop->size ? byteOfVal (raop->aopu.aop_lit, i) : 0;
+          unsigned char b = litByte (raop, i);
           if (!strcmp (op, "and") && b == 0)
             {
               emit2 ("ldi", "#0x00");
@@ -1802,7 +2010,7 @@ cmpByteFlags (const asmop *laop, const asmop *raop, int i, bool sign)
       loadA (laop, i);
       if (sign)
         {
-          unsigned char k = (raop->type == AOP_LIT && i < raop->size) ? byteOfVal (raop->aopu.aop_lit, i) : 0;
+          unsigned char k = (raop->type == AOP_LIT) ? litByte (raop, i) : 0;
           emit2 ("ldc", "#0");
           emit2 ("adc", "#0x80");
           emit2 ("cpi", "#0x%02x", (k ^ 0x80) & 0xff);
@@ -1835,6 +2043,7 @@ cmpByteFlags (const asmop *laop, const asmop *raop, int i, bool sign)
   emit2 ("cpi", "#0x01");
   cost (1, 1);
   loadA (laop, i);
+  prepareMem (raop, i);
   emit2 ("ifte", "nc");
   emitAluA ("cmp", raop, i);
   emit2 ("ldc", "#0");
@@ -2037,7 +2246,10 @@ genCmpEQorNE (const iCode *ic, iCode *ifx)
   /* compare with zero: or the bytes together */
   if (raop->type == AOP_LIT && aopIsLitVal (raop, 0, size, 0))
     {
-      loadOrBytes (laop, size);
+      if (laop == left->aop)
+        loadTruth (left);
+      else
+        loadOrBytes (laop, size);
     }
   else
     {
@@ -2135,7 +2347,7 @@ genIfx (iCode *ic)
   if (cond->aop->type == AOP_CND)
     wassertl (0, "Condition operand without a comparison");
 
-  loadOrBytes (cond->aop, cond->aop->size);
+  loadTruth (cond);
   if (IC_TRUE (ic))
     emitBranch ("bnz", IC_TRUE (ic));
   else
@@ -2306,9 +2518,11 @@ genShift (const iCode *ic, bool left_shift)
     symbol *tlbl = regalloc_dry_run ? 0 : newiTempLabel (0);
     symbol *tlbl_done = regalloc_dry_run ? 0 : newiTempLabel (0);
 
-    genMove (result->aop, left->aop);
+    /* the count first: the result may share its stack slot with the
+       count (an operand that dies here) */
     loadA (right->aop, 0);
     pushA ();
+    genMove (result->aop, left->aop);
     emitLbl (tlbl);
     emit2 ("ldax", "1(sp)");
     cost (1, 1);
@@ -2336,6 +2550,8 @@ genShift (const iCode *ic, bool left_shift)
   }
 
 release:
+  if (left_shift)
+    fixBitIntResult (ic, false);
   freeAsmop (left);
   freeAsmop (right);
   freeAsmop (result);
@@ -2506,6 +2722,7 @@ genMult (const iCode *ic)
         }
     }
 
+  fixBitIntResult (ic, false);
   freeAsmop (left);
   freeAsmop (right);
   freeAsmop (result);
@@ -2524,11 +2741,28 @@ ptrType (const operand *op)
 
   if (op->aop->type == AOP_IMMD)
     ptype = op->aop->aopu.code ? CPOINTER : POINTER;
+  else if (op->aop->type == AOP_LIT)
+    /* ldx cannot carry bit 15 (it sets the condition tag), so the space
+       of a literal address has to be decided here */
+    ptype = (ulFromVal (op->aop->aopu.aop_lit) & 0x8000) ? CPOINTER : POINTER;
   else if (op->aop->type == AOP_STL)
     ptype = POINTER;
   else if (ptype != CPOINTER && ptype != GPOINTER)
     ptype = POINTER;
   return (ptype);
+}
+
+/* Can size bytes at this constant address be reached by the direct
+   lda/sta forms (9-bit address)?  A symbol is assumed to be placed there
+   by the linker. */
+static bool
+litDirect (const asmop *aop, int size)
+{
+  if (aop->type == AOP_IMMD)
+    return !aop->aopu.far;
+  if (aop->type == AOP_LIT)
+    return ((ulFromVal (aop->aopu.aop_lit) & 0xffff) + size <= 0x200);
+  return false;
 }
 
 /* IX <- pointer operand. Clobbers A for pointers in data memory. */
@@ -2568,7 +2802,7 @@ ixLoadPtr (const asmop *aop)
       G.ix.offset = aop->aopu.immd_off;
       break;
     case AOP_LIT:
-      emit2 ("ldx", "#0x%04x", (unsigned) ulFromVal (aop->aopu.aop_lit) & 0xffff);
+      emit2 ("ldx", "#0x%04x", (unsigned) ulFromVal (aop->aopu.aop_lit) & 0x7fff);
       cost (2, 2);
       ixInvalidate ();
       break;
@@ -2630,6 +2864,57 @@ codeReadToResult (const asmop *result, int off, int size)
   ixInvalidate ();
 }
 
+/* The raw bytes of a bit-field have been read into result[0..nbytes-1].
+   Shift and mask the partial byte, sign-extend it, and fill the rest of
+   the result.  Shifts rotate through C (amode 1); the bits that come in
+   land in the part the mask removes. */
+static void
+bitFieldFixResult (const asmop *result, int nbytes, int blen, int bstr, bool sign)
+{
+  int last = nbytes - 1;
+  int bits = blen - 8 * last;          /* bits in the last byte, 1..8 */
+  bool partial = bits < 8;
+
+  if (partial || (sign && last + 1 < result->size))
+    loadA (result, last);
+  if (partial)
+    {
+      for (int j = 0; j < bstr; j++)
+        {
+          emit2 ("shr", "");
+          cost (1, 1);
+        }
+      emit2 ("andi", "#0x%02x", 0xff >> (8 - bits));
+      cost (1, 1);
+      if (sign)
+        {
+          /* the masked bits are zero, so adding the high mask is an or */
+          emit2 ("ldc", "#0");
+          emit2 ("btst", "%d", bits - 1);
+          emit2 ("if", "z");
+          emit2 ("adc", "#0x%02x", (0xff00 >> (8 - bits)) & 0xff);
+          cost (4, 4);
+        }
+      storeA (result, last);
+    }
+  if (last + 1 < result->size)
+    {
+      if (sign)
+        {
+          emit2 ("btst", "7");
+          emit2 ("ifte", "z");
+          emit2 ("ldi", "#0xff");
+          emit2 ("ldi", "#0x00");
+          cost (4, 4);
+          for (int i = last + 1; i < result->size; i++)
+            storeA (result, i);
+        }
+      else
+        for (int i = last + 1; i < result->size; i++)
+          cheapMove (result, i, ASMOP_ZERO, 0);
+    }
+}
+
 /*-----------------------------------------------------------------*/
 /* genPointerGet - generate code for pointer get                   */
 /*-----------------------------------------------------------------*/
@@ -2652,13 +2937,24 @@ genPointerGet (const iCode *ic)
   off = (int) operandLitValue (right);
 
   size = result->aop->size;
-  bool bit_field = IS_BITVAR (operandType (left)->next);
-  wassertl (regalloc_dry_run || !bit_field, "Unimplemented bit field read");
+  /* Like stm8: IS_BITVAR (operandType (left)->next) would be the natural test,
+     but pointer reuse in unions makes the result type the reliable one. */
+  bool bit_field = IS_BITVAR (operandType (result));
+  int blen = bit_field ? SPEC_BLEN (getSpec (operandType (result))) : 0;
+  int bstr = bit_field ? SPEC_BSTR (getSpec (operandType (result))) : 0;
+  if (bit_field)
+    {
+      /* read only the bytes that hold the field; the rest is filled below */
+      int nbytes = (blen + 7) / 8;
+      wassertl (nbytes == 1 || !bstr, "Multi-byte bit-field not byte-aligned");
+      if (nbytes < size)
+        size = nbytes;
+    }
 
   int ptype = ptrType (left);
 
   /* constant address in data space: direct */
-  if (ptype == POINTER && (left->aop->type == AOP_IMMD || left->aop->type == AOP_LIT))
+  if (ptype == POINTER && litDirect (left->aop, size))
     {
       asmop dir;
       memset (&dir, 0, sizeof (dir));
@@ -2741,9 +3037,272 @@ genPointerGet (const iCode *ic)
   }
 
 release:
+  if (bit_field)
+    bitFieldFixResult (result->aop, size, blen, bstr, !SPEC_USIGN (getSpec (operandType (result))));
   freeAsmop (left);
   freeAsmop (right);
   freeAsmop (result);
+}
+
+/*-----------------------------------------------------------------*/
+/* genPointerPush - push the bytes of an object through a pointer  */
+/* (a struct passed by value).  High byte first, like genIpush.    */
+/*-----------------------------------------------------------------*/
+static void
+genPointerPush (const iCode *ic)
+{
+  operand *left = IC_LEFT (ic);
+  operand *right = IC_RIGHT (ic);
+
+  D (emit2 ("; genPointerPush", ""));
+
+  aopOp (left, ic);
+
+  wassertl (right, "IPUSH_VALUE_AT_ADDRESS without right operand");
+  wassertl (IS_OP_LITERAL (right), "IPUSH_VALUE_AT_ADDRESS with non-literal right operand");
+  int off = (int) operandLitValue (right);
+  int size = getSize (operandType (left)->next);
+  int ptype = ptrType (left);
+
+  if (ptype == POINTER && litDirect (left->aop, size))
+    {
+      /* constant address in data space: direct loads */
+      asmop dir;
+      memset (&dir, 0, sizeof (dir));
+      dir.type = AOP_DIR;
+      dir.size = size;
+      char buf[32];
+      if (left->aop->type == AOP_LIT)
+        {
+          SNPRINTF (buf, sizeof (buf), "0x%04x", (unsigned) ulFromVal (left->aop->aopu.aop_lit) & 0xffff);
+          dir.aopu.immd = buf;
+          dir.aopu.immd_off = off;
+        }
+      else
+        {
+          dir.aopu.immd = left->aop->aopu.immd;
+          dir.aopu.immd_off = left->aop->aopu.immd_off + off;
+        }
+      for (int i = size - 1; i >= 0; i--)
+        {
+          loadA (&dir, i);
+          pushA ();
+        }
+      goto release;
+    }
+
+  ixLoadPtr (left->aop);
+
+  if (ptype == POINTER)
+    {
+      for (int i = size - 1; i >= 0; i--)
+        {
+          emit2 ("ldax", "%d(ix)", off + i);
+          cost (1, 1);
+          pushA ();
+        }
+      goto release;
+    }
+
+  /* code space, or a generic pointer that may point there: walk the
+     ldi/ret pairs backwards.  call ix post-increments IX, so the previous
+     pair is 3 words back. */
+  {
+    symbol *tlbl_code = regalloc_dry_run ? 0 : newiTempLabel (0);
+    symbol *tlbl_done = regalloc_dry_run ? 0 : newiTempLabel (0);
+
+    if (ptype == CPOINTER && left->aop->type == AOP_IMMD)
+      {
+        /* a constant object by name: ldx #sym is the word address already */
+        asmop code;
+        memset (&code, 0, sizeof (code));
+        code.type = AOP_CODE;
+        code.size = size;
+        code.aopu.immd = left->aop->aopu.immd;
+        code.aopu.immd_off = left->aop->aopu.immd_off + off;
+        code.aopu.code = true;
+        ixLoadSym (&code, 0);
+        if (size - 1)
+          {
+            emit2 ("adx", "#%d", 2 * (size - 1));
+            cost (1, 1);
+          }
+        for (int i = size - 1; i >= 0; i--)
+          {
+            emit2 ("call", "ix");
+            cost (1, 4);
+            pushA ();
+            if (i)
+              {
+                emit2 ("adx", "#-3");
+                cost (1, 1);
+              }
+          }
+        ixInvalidate ();
+        goto release;
+      }
+
+    if (ptype != CPOINTER)
+      {
+        emit2 ("txau", "");
+        emit2 ("btst", "7");
+        cost (2, 2);
+        emitBranch ("bz", tlbl_code);
+        for (int i = size - 1; i >= 0; i--)
+          {
+            emit2 ("ldax", "%d(ix)", off + i);
+            cost (1, 1);
+            pushA ();
+          }
+        G.stack.pushed -= size;
+        emitBranch ("br", tlbl_done);
+        emitLbl (tlbl_code);
+      }
+    ixCodePtrToWord ();
+    if (off + size - 1)
+      {
+        emit2 ("adx", "#%d", 2 * (off + size - 1));
+        cost (1, 1);
+      }
+    for (int i = size - 1; i >= 0; i--)
+      {
+        emit2 ("call", "ix");
+        cost (1, 4);
+        pushA ();
+        if (i)
+          {
+            emit2 ("adx", "#-3");
+            cost (1, 1);
+          }
+      }
+    if (ptype != CPOINTER)
+      emitLbl (tlbl_done);
+    ixInvalidate ();
+  }
+
+release:
+  freeAsmop (left);
+}
+
+/* Store a bit-field whose last byte is partial: the full bytes are plain
+   stores, the last one is (old & ~mask) | ((value << bstr) & mask).
+   The memory is either direct (a constant address) or i(ix). */
+static void
+genPointerSetBitField (operand *left, operand *right, int size, int blen, int bstr)
+{
+  asmop dir;
+  bool direct = litDirect (left->aop, size);
+  char buf[32];
+  int last = size - 1;
+  int bits = blen - 8 * last;
+  unsigned char mask = (0xff >> (8 - bits)) << bstr;
+
+  if (direct)
+    {
+      memset (&dir, 0, sizeof (dir));
+      dir.type = AOP_DIR;
+      dir.size = size;
+      if (left->aop->type == AOP_LIT)
+        {
+          SNPRINTF (buf, sizeof (buf), "0x%04x", (unsigned) ulFromVal (left->aop->aopu.aop_lit) & 0xffff);
+          dir.aopu.immd = buf;
+          dir.aopu.immd_off = 0;
+        }
+      else
+        {
+          dir.aopu.immd = left->aop->aopu.immd;
+          dir.aopu.immd_off = left->aop->aopu.immd_off;
+        }
+    }
+
+  /* a value that needs IX to be read (code space, or the address of a
+     stack object) goes through the stack first */
+  bool prepushed = !direct && (right->aop->type == AOP_CODE || right->aop->type == AOP_STL);
+  if (prepushed)
+    for (int i = size - 1; i >= 0; i--)
+      {
+        loadA (right->aop, i);
+        pushA ();
+      }
+  if (!direct)
+    ixLoadPtr (left->aop);
+
+  for (int i = 0; i < size; i++)
+    {
+      if (i < last)
+        {
+          if (prepushed)
+            popA ();
+          else
+            loadA (right->aop, i);
+          if (direct)
+            storeA (&dir, i);
+          else
+            {
+              emit2 ("stax", "%d(ix)", i);
+              cost (1, 1);
+            }
+          continue;
+        }
+
+      if (right->aop->type == AOP_LIT)
+        {
+          unsigned char bval = (byteOfVal (right->aop->aopu.aop_lit, i) << bstr) & mask;
+          if (direct)
+            loadA (&dir, i);
+          else
+            {
+              emit2 ("ldax", "%d(ix)", i);
+              cost (1, 1);
+            }
+          emit2 ("andi", "#0x%02x", ~mask & 0xff);
+          cost (1, 1);
+          if (bval)
+            {
+              /* the field bits are now zero: adding is an or */
+              emit2 ("ldc", "#0");
+              emit2 ("adc", "#0x%02x", bval);
+              cost (2, 2);
+            }
+        }
+      else
+        {
+          if (prepushed)
+            popA ();
+          else
+            loadA (right->aop, i);
+          for (int j = 0; j < bstr; j++)
+            {
+              emit2 ("shl", "");
+              cost (1, 1);
+            }
+          emit2 ("andi", "#0x%02x", mask);
+          cost (1, 1);
+          pushA ();
+          if (direct)
+            loadA (&dir, i);
+          else
+            {
+              emit2 ("ldax", "%d(ix)", i);
+              cost (1, 1);
+            }
+          emit2 ("andi", "#0x%02x", ~mask & 0xff);
+          emit2 ("or", "1(sp)");
+          cost (2, 2);
+          adjustStack (1);
+        }
+      if (direct)
+        storeA (&dir, i);
+      else
+        {
+          emit2 ("stax", "%d(ix)", i);
+          cost (1, 1);
+        }
+    }
+  if (direct)
+    ixNoteStore (&dir, 0);
+  else
+    ixInvalidate ();
 }
 
 /*-----------------------------------------------------------------*/
@@ -2764,13 +3323,33 @@ genPointerSet (iCode *ic)
   size = right->aop->size;
   wassert (operandType (left)->next);
   bool bit_field = IS_BITVAR (operandType (left)->next);
-  wassertl (regalloc_dry_run || !bit_field, "Unimplemented bit field write");
+  int blen = 0, bstr = 0;
+  if (bit_field)
+    {
+      sym_link *btype = IS_BITVAR (getSpec (operandType (right))) ? getSpec (operandType (right)) : getSpec (operandType (left)->next);
+      blen = SPEC_BLEN (btype);
+      bstr = SPEC_BSTR (btype);
+      size = (blen + 7) / 8;
+      wassertl (size == 1 || !bstr, "Multi-byte bit-field not byte-aligned");
+    }
 
   int ptype = ptrType (left);
-  wassertl (regalloc_dry_run || ptype != CPOINTER, "Write through a pointer to code space");
+  if (ptype == CPOINTER)
+    {
+      /* code space is read-only: undefined behaviour, store nothing */
+      if (!regalloc_dry_run)
+        werror (W_CONTINUE, "lisa: store through a pointer to code space has no effect");
+      goto release;
+    }
+
+  if (bit_field && blen % 8)
+    {
+      genPointerSetBitField (left, right, size, blen, bstr);
+      goto release;
+    }
 
   /* constant address: direct store */
-  if (left->aop->type == AOP_IMMD || left->aop->type == AOP_LIT)
+  if (litDirect (left->aop, size))
     {
       asmop dir;
       memset (&dir, 0, sizeof (dir));
@@ -2911,7 +3490,7 @@ genCast (const iCode *ic)
   /* to bool: result = (right != 0) */
   if (IS_BOOL (ctype) || IS_BOOL (operandType (result)))
     {
-      loadOrBytes (right->aop, right->aop->size);
+      loadTruth (right);
       emit2 ("ldac", "ne");
       cost (1, 1);
       storeA (result->aop, 0);
@@ -2927,6 +3506,11 @@ genCast (const iCode *ic)
   if (result->aop->size <= right->aop->size)
     {
       genMove_o (result->aop, 0, right->aop, 0, result->aop->size);
+      /* into a _BitInt with padding bits from a wider type: mask, and
+         sign-fill the padding of a signed one */
+      sym_link *restype = operandType (result);
+      if (IS_BITINT (restype) && (SPEC_BITINTWIDTH (restype) % 8) && bitsForType (restype) < bitsForType (rtype))
+        fixBitIntResult (ic, true);
       goto release;
     }
 
@@ -2951,6 +3535,9 @@ genCast (const iCode *ic)
       }
     for (int i = rsize; i < result->aop->size; i++)
       storeA (result->aop, i);
+    /* a signed value widened into an unsigned _BitInt: clear the padding */
+    if (sign)
+      fixBitIntResult (ic, false);
   }
 
 release:
@@ -3128,7 +3715,7 @@ genLisaiCode (iCode *ic)
       break;
 
     case IPUSH_VALUE_AT_ADDRESS:
-      wassertl (0, "Unimplemented iCode: IPUSH_VALUE_AT_ADDRESS");
+      genPointerPush (ic);
       break;
 
     case CALL:
@@ -3511,4 +4098,109 @@ genLisaCode (iCode *lic)
 
   /* destroy the line list */
   destroy_line_list ();
+}
+
+/*-----------------------------------------------------------------*/
+/* lisaNotUsed - peephole support: is the flag "z" or "c" dead     */
+/* after the line endPl?  Scans forward until something reads it   */
+/* (false) or rewrites it unconditionally (true); labels, branches */
+/* and calls are treated as a use.                                 */
+/*-----------------------------------------------------------------*/
+bool
+lisaNotUsed (const char *what, lineNode *endPl, lineNode *head)
+{
+  bool z = !strcmp (what, "z"), c = !strcmp (what, "c");
+  if (!z && !c)
+    return false;
+
+  for (lineNode *pl = endPl->next; pl; pl = pl->next)
+    {
+      const char *l = pl->line;
+      if (pl->isComment || pl->isDebug || !l)
+        continue;
+      while (*l == ' ' || *l == '\t')
+        l++;
+      if (!*l || *l == ';')
+        continue;
+      if (pl->isLabel || strchr (l, ':'))
+        return false;
+
+      char op[16], arg[32];
+      int n = 0;
+      while (l[n] && l[n] != ' ' && l[n] != '\t' && l[n] != '.' && n < 15)
+        {
+          op[n] = l[n];
+          n++;
+        }
+      op[n] = 0;
+      bool predicated = (l[n] == '.');
+      const char *a = l + n;
+      while (*a && *a != ' ' && *a != '\t')
+        a++;
+      while (*a == ' ' || *a == '\t')
+        a++;
+      n = 0;
+      while (*a && *a != ' ' && *a != '\t' && *a != ',' && *a != ';' && n < 31)
+        arg[n++] = *a++;
+      arg[n] = 0;
+
+      /* control flow: give up */
+      if (!strcmp (op, "br") || !strcmp (op, "jal") || !strcmp (op, "jmp") || !strcmp (op, "call") ||
+          !strcmp (op, "ret") || !strcmp (op, "rets") || !strcmp (op, "brk"))
+        return false;
+
+      /* condition consumers */
+      if (!strcmp (op, "bz") || !strcmp (op, "bnz") || !strcmp (op, "rz") || !strcmp (op, "rc"))
+        {
+          if (z && strcmp (op, "rc") || c && !strcmp (op, "rc"))
+            return false;
+          continue;
+        }
+      if (!strcmp (op, "if") || !strcmp (op, "iftt") || !strcmp (op, "ifte") || !strcmp (op, "ldac"))
+        {
+          bool uses_z = strcmp (arg, "c") && strcmp (arg, "nc");          /* eq/ne/z/nz and the ordered ones */
+          bool uses_c = strcmp (arg, "eq") && strcmp (arg, "ne") && strcmp (arg, "z") && strcmp (arg, "nz");
+          if (z && uses_z || c && uses_c)
+            return false;
+          if (!strcmp (op, "ldac"))
+            {
+              if (z && !predicated)
+                return true;           /* loads A: Z rewritten */
+            }
+          continue;
+        }
+      if (!strcmp (op, "ldz"))
+        {
+          if (z && !strcmp (arg, "notz") || c && !strcmp (arg, "c"))
+            return false;
+          if (z && !predicated)
+            return true;
+          continue;
+        }
+
+      /* readers of C */
+      if (c && (!strcmp (op, "adc") || !strcmp (op, "sub") || !strcmp (op, "savec") || !strcmp (op, "shl") ||
+                !strcmp (op, "shr") || !strcmp (op, "shl16") || !strcmp (op, "shr16") || !strcmp (op, "addax") ||
+                !strcmp (op, "subax") || !strcmp (op, "lddiv") || !strcmp (op, "div") || !strcmp (op, "rem")))
+        return false;
+
+      if (predicated)
+        continue;                /* may not execute: no guaranteed rewrite */
+
+      /* unconditional writers */
+      if (z && (!strcmp (op, "ldi") || !strcmp (op, "lda") || !strcmp (op, "ldax") || !strcmp (op, "pop") && !strcmp (arg, "a") ||
+                !strcmp (op, "txa") || !strcmp (op, "txau") || !strcmp (op, "add") || !strcmp (op, "adc") ||
+                !strcmp (op, "sub") || !strcmp (op, "and") || !strcmp (op, "andi") || !strcmp (op, "or") ||
+                !strcmp (op, "xor") || !strcmp (op, "mul") || !strcmp (op, "mulu") || !strcmp (op, "swap") ||
+                !strcmp (op, "swapi") || !strcmp (op, "shl") || !strcmp (op, "shr") || !strcmp (op, "cpi") ||
+                !strcmp (op, "cmp") || !strcmp (op, "btst") || !strcmp (op, "inx") || !strcmp (op, "dcx") ||
+                !strcmp (op, "cpx") || !strcmp (op, "notz") || !strcmp (op, "tfa") || !strcmp (op, "ldirq")))
+        return true;
+      if (c && (!strcmp (op, "ldi") || !strcmp (op, "ldc") || !strcmp (op, "add") || !strcmp (op, "cpi") ||
+                !strcmp (op, "cmp") || !strcmp (op, "inx") || !strcmp (op, "dcx") || !strcmp (op, "cpx") ||
+                !strcmp (op, "restc")))
+        return true;
+      /* anything else: neither reads nor writes the flag */
+    }
+  return false;                  /* end of the function: be safe */
 }

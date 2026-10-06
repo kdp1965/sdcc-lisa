@@ -13,6 +13,8 @@
 # define ADDRESS(x) (0x10 ## x)
 #elif defined(__SDCC_f8)
 # define ADDRESS(x) (0x30 ## x)
+#elif defined(__SDCC_lisa)
+# define ADDRESS(x) (0x01 ## x) /* within the 9-bit direct range */
 #else
 # define ADDRESS(x) (0xCA ## x)
 #endif

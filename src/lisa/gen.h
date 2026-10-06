@@ -72,6 +72,7 @@ typedef struct asmop
         int immd_off;   /* byte offset */
         bool code;      /* in code space */
         bool func;      /* function address */
+        bool far;       /* an __at address beyond the 9-bit direct range (AOP_DIR) */
       };
     int stk_off;        /* AOP_STL: entry-SP-relative offset of the object */
     asmop_byte bytes[8];
@@ -81,6 +82,7 @@ typedef struct asmop
 asmop;
 
 void genLisaCode (iCode *);
+bool lisaNotUsed (const char *what, lineNode *endPl, lineNode *head);
 void lisa_emitDebuggerSymbol (const char *);
 void lisa_init_asmops (void);
 

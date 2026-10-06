@@ -21,6 +21,9 @@ void testBug(void)
 #elif defined (__SDCC_pdk14) || defined (__SDCC_pdk15)
 	signed long *l = (signed long *) 0x78;
 	float *f = (float *) 0x78;
+#elif defined (__SDCC_lisa)
+	signed long *l = (signed long *) 0x1000;
+	float *f = (float *) 0x1000;
 #elif defined (__SDCC)
 	signed long *l = (signed long *) 0xcab0;
 	float *f = (float *) 0xcab0;

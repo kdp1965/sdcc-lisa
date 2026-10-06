@@ -2127,7 +2127,9 @@ checkSClass (symbol *sym, int isProto)
       t = sym->type;
       while (IS_ARRAY (t))
         t = t->next;
-      if (IS_CONSTANT (t))
+      /* lisa: an object placed with __at lives in data memory unless it
+         says __code - code-space addresses are pair indices, not bytes */
+      if (IS_CONSTANT (t) && !(TARGET_IS_LISA && SPEC_ABSA (sym->etype)))
         {
           SPEC_SCLS (sym->etype) = S_CODE;
           SPEC_SCLS_IMPLICITINTRINSIC (sym->etype) = true;

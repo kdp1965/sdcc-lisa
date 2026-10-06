@@ -18,6 +18,7 @@ LISA_FLOAT = $(COMMON_FLOAT)
 
 LISA_INT = $(COMMON_INT) \
   _mulint.c \
+  _mulschar.c \
   _divuchar.c \
   _divschar.c \
   _divuint.c \
@@ -60,16 +61,17 @@ LISA_SDCC = $(COMMON_SDCC) \
   _memcmp.c \
   div.c \
   ldiv.c \
+  lldiv.c \
   sprintf.c \
   vprintf.c \
   printf_large.c \
   puts.c \
   gets.c
 
-LISASOURCES = $(addprefix ../,$(LISA_INT) $(LISA_LONG) $(LISA_SDCC))
-LISAOBJECTS = $(patsubst %.c,%.rel,$(LISA_INT) $(LISA_LONG) $(LISA_SDCC))
+LISASOURCES = $(addprefix ../,$(LISA_FLOAT) $(LISA_INT) $(LISA_LONG) $(LISA_LONGLONG) $(LISA_SDCC))
+LISAOBJECTS = $(patsubst %.c,%.rel,$(LISA_FLOAT) $(LISA_INT) $(LISA_LONG) $(LISA_LONGLONG) $(LISA_SDCC))
 
-OBJ =
+OBJ = setjmp.rel atomic_flag_test_and_set.rel heap.rel
 
 LIB = lisa.lib
 AS = $(SAS)
