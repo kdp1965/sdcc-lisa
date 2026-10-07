@@ -16,15 +16,11 @@ include $(srcdir)/../incl.mk
 
 LISA_FLOAT = $(COMMON_FLOAT)
 
-# the int and long divisions and remainders are divu.s and divul.s (the
-# hardware divider)
+# the char, int and long divisions and remainders are divu.s and divul.s
+# (the hardware divider)
 LISA_INT = $(COMMON_INT) \
   _mulint.c \
-  _mulschar.c \
-  _divuchar.c \
-  _divschar.c \
-  _moduchar.c \
-  _modschar.c
+  _mulschar.c
 
 LISA_LONG = \
   _mullong.c

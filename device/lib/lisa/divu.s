@@ -1,6 +1,7 @@
 ;--------------------------------------------------------------------------
-;  divu.s - _divuint() / _moduint() / _divsint() / _modsint() on the
-;  hardware divider, for the LISA port
+;  divu.s - _divuint() / _moduint() / _divsint() / _modsint() and the
+;  eight byte helpers (_divschar() ... _modsuchar()) on the hardware
+;  divider, for the LISA port
 ;
 ;  Copyright (C) 2026
 ;
@@ -162,6 +163,124 @@ done16:
 5$:	ads	#1
 	lra
 	ret
+
+; ---- bytes ---------------------------------------------------------------
+;
+; signed char a / b and a % b, and the mixed ones (one operand unsigned
+; - "su": a unsigned, "us": b unsigned - as C's int arithmetic has them:
+; the result takes the sign of the signed operand).  SDCC has the byte
+; helpers return int, since -128 / -1 is 128 and 255 / -1 is -255: the
+; result is |a| / |b| (|a| and |b| taken in place, div 3 / rem 3), at
+; most 255, or its 16-bit negation when the signs say so.  The unsigned
+; pair is here for the shape the compiler cannot inline (a _BitInt).
+; Frame after sra and the flag push: 1(sp) the flag - bit 7 negate the
+; result, bit 0 remainder; RA 2,3; the return slot 4,5; a 6(sp); b 7(sp).
+
+	.globl __divschar, __modschar, __divuchar, __moduchar
+	.globl __divsuchar, __modsuchar, __divuschar, __moduschar
+
+__divschar:
+	sra
+	ldax	5(sp)			; the signs differ: a negative quotient
+	xor	6(sp)
+	andi	#0x80
+	push	a
+	jal	absa
+	jal	absb
+	br	div8
+__modschar:
+	sra
+	ldax	5(sp)			; the dividend's sign is the remainder's
+	andi	#0x80
+	ldc	#0
+	adc	#0x01
+	push	a
+	jal	absa
+	jal	absb
+	br	div8
+__divuschar:				; a signed, b unsigned
+	sra
+	ldax	5(sp)
+	andi	#0x80
+	push	a
+	jal	absa
+	br	div8
+__moduschar:
+	sra
+	ldax	5(sp)
+	andi	#0x80
+	ldc	#0
+	adc	#0x01
+	push	a
+	jal	absa
+	br	div8
+__divsuchar:				; a unsigned, b signed
+	sra
+	ldax	6(sp)
+	andi	#0x80
+	push	a
+	jal	absb
+	br	div8
+__modsuchar:				; a non-negative dividend: a non-negative remainder
+	sra
+	ldi	#0x01
+	push	a
+	jal	absb
+	br	div8
+__divuchar:
+	sra
+	ldi	#0x00
+	push	a
+	br	div8
+__moduchar:
+	sra
+	ldi	#0x01
+	push	a
+div8:
+	ldax	6(sp)
+	tax				; the 8-bit dividend
+	ldax	1(sp)
+	btst	0
+	bz	1$			; Z = bit 0: remainder
+	ldax	7(sp)
+	div	3
+	br	2$
+1$:	ldax	7(sp)
+	rem	3
+2$:	stax	4(sp)			; the result, 0..255, as an int
+	ldi	#0x00
+	stax	5(sp)
+	ldax	1(sp)
+	btst	7
+	bnz	3$
+	spix
+	adx	#4
+	jal	neg2			; negated as 16 bits
+3$:	ads	#1
+	lra
+	ret
+
+; a = |a|, b = |b| (the frame above; a jal moves no stack)
+absa:
+	ldax	6(sp)
+	btst	7
+	bnz	9$
+	ldi	#0xff
+	sub	6(sp)
+	ldc	#1
+	adc	#0x00
+	stax	6(sp)
+9$:	ret
+absb:
+	ldax	7(sp)
+	btst	7
+	bnz	9$
+	ldi	#0xff
+	sub	7(sp)
+	ldc	#1
+	adc	#0x00
+	stax	7(sp)
+9$:	ret
 
 ; the two bytes at IX negated: ~x + 1 with the carry through adc #0 (ldi
 ; clears C for the sub, whose own C the TT07 gets wrong; stax keeps it)

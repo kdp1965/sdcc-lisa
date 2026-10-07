@@ -319,10 +319,23 @@ were 468 words and called the unsigned routine with everything pushed
 again; the entries are 107 words.  test_ptroff (built `--tt07-cache`),
 test_signed 16-20 and test_divl 55-60 cover it, on the chip as well.
 
+Byte division (2026-10-07): the eight byte helpers (`__divschar`,
+`__modschar`, the mixed `__divsuchar` / `__divuschar` / `__modsuchar` /
+`__moduschar`, and the unsigned pair for a `_BitInt`) are in divu.s: the
+operands' magnitudes in place, `div 3` / `rem 3`, the result - at most
+255 - negated as 16 bits when the signed operand's sign says so.  They
+keep SDCC's int-returning type for the byte helpers (SDCCsymt.c): the
+quotient of two chars is an int in C, SDCC still hands char operands to
+the byte helper, and -128 / -1 is 128, 255 / -1 is -255 - a byte-returning
+version broke `xa / xb == -14` in test_divsh (the high byte of the compare
+was never written).  89 words for the 272 of the C files, which called
+the 16-bit routines with everything pushed again; test_signed 21-27.
+
 Not done / next:
-* Code quality: `_divschar` / `_modschar` are still the C wrappers; a
-  function's result is built in a temporary and copied to the return
-  slot (`rd_scc` in test_ptroff.asm).
+* Code quality: a function's result is built in a temporary and copied
+  to the return slot (`rd_scc` in test_ptroff.asm); a char-result byte
+  division could skip the return slot (6 words at the call site instead
+  of 9) if genDivMod called a byte-returning helper of its own.
 * `ROT` and `GETWORD` are not claimed (`hasExtBitOp`: GETBYTE only), so
   SDCC lowers them itself; `__critical` is just eidi (no interrupt state
   to save: `ie` cannot be read).
