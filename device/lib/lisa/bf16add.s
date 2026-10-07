@@ -209,15 +209,18 @@ subtract:
 	or	5(sp)
 	bz	ret_zero	; equal magnitudes
 	; normalize: shift the pair left until the hidden bit is back, e--
-	; each time (the high byte at 1(sp) for shl16, the low byte in A)
+	; each time (the high byte at 1(sp) for shl16, the low byte in A;
+	; the test of SH's bit 7 goes through a push of SL, since swap n(sp)
+	; addresses sp + n - 512 on the TT07 silicon)
 	ldax	5(sp)
 	push	a		; every offset below is one more
 	ldax	7(sp)		; A = SL
 norm:
-	swap	1(sp)		; A = SH, 1(sp) = SL
+	push	a		; SL, SH now at 2(sp)
+	ldax	2(sp)		; SH
 	btst	7
 	bz	normalized	; Z = bit 7 set
-	swap	1(sp)		; A = SL, 1(sp) = SH
+	pop	a		; A = SL
 	ldc	#0
 	shl16	1(sp)		; 1(sp) = {SH[6:0], SL[7]}, A = {SL[6:0], 0}
 	dcx	8(sp)		; e--, Z = it reached 0
@@ -225,9 +228,10 @@ norm:
 	ads	#1
 	br	ret_szero	; underflow
 normalized:
-	stax	6(sp)		; SH
+	pop	a		; A = SL
+	stax	7(sp)		; SL
 	pop	a
-	stax	6(sp)		; SL
+	stax	5(sp)		; SH
 round:
 	; to nearest even: up when the guard bit is set and (a sticky bit, or the mantissa is odd)
 	ldax	6(sp)

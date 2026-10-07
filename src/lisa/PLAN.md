@@ -272,6 +272,14 @@ slot; the test `test_divl.c` runs on the 128-byte default stack).
 words for both.  `test_divl.c` (table, signed, 200 LCG cases against a
 bit-serial reference) passes on the chip.
 
+No `swap n(sp)` (2026-10-06): on the TT07 silicon it addresses sp + n -
+512 (lisa_isa.md), which only the 128-byte RAM hides, so `emitAluA` puts
+A on the stack and the literal / loaded byte in A for the commutative
+ops, pushes both for sub / cmp against an SFR / CODE / STL byte, and
+genIpush parks a live A in IX's low byte (tax / txa) or swaps through
+`spix; adx #1; swap 0(ix)`; bf16add.s tests the hidden bit through a
+push.  lisa_sim models the silicon address.
+
 Not done / next:
 * Code quality: the pointer-write side (`stax k(ix)` already) and
   IPUSH_VALUE_AT_ADDRESS through the helpers, `x >= 0` as a value

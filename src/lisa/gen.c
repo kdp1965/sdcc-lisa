@@ -1084,6 +1084,13 @@ prepareMem (const asmop *aop, int offset)
     farStkArg (aop, offset);
 }
 
+static bool
+aluCommutative (const char *op)
+{
+  return (!strcmp (op, "add") || !strcmp (op, "and") || !strcmp (op, "or") || !strcmp (op, "xor") ||
+          !strcmp (op, "mul") || !strcmp (op, "mulu"));
+}
+
 /* A <- A op aop[offset] for op in add/sub/and/or/xor/cmp (memory forms).
    Literal operands: add -> adc #, sub -> adc #~ (caller sets the carry
    convention), and -> andi, or -> andi/adc trick, cmp -> cpi.  Operands
@@ -1126,13 +1133,16 @@ emitAluA (const char *op, const asmop *aop, int offset)
         }
       else
         {
-          /* xor with a literal, or with a symbol address byte: via the stack */
+          /* xor with a literal, or with a symbol address byte, a multiply
+             by a literal: all commutative, so A goes onto the stack and
+             the literal into A.  (No swap n(sp): on the TT07 silicon it
+             addresses sp + n - 512, see lisa_isa.md.) */
+          wassertl_bt (aluCommutative (op), "non-commutative ALU op with an immediate operand");
           emit2 ("push", "a");
           G.stack.pushed++;
           emit2 ("ldi", "%s", imm);
-          emit2 ("swap", "1(sp)");
           emit2 (op, "1(sp)");
-          cost (4, 4);
+          cost (3, 3);
           adjustStack (1);
         }
       cost (1, 1);
@@ -1141,15 +1151,26 @@ emitAluA (const char *op, const asmop *aop, int offset)
   /* a byte in A cannot be an operand of itself: the generators order the
      loads so that A is read first, or park it on the stack */
   wassertl_bt (aop->type != AOP_REG, "A-resident operand as the memory operand of an ALU instruction");
-  /* SFR, CODE, STL: put the byte on the stack (swap gets the old A back) */
+  /* SFR, CODE, STL: A onto the stack, the byte into A - and for sub / cmp
+     (which their callers only use here unpredicated) the byte onto the
+     stack too and the old A back */
   emit2 ("push", "a");
   G.stack.pushed++;
   cost (1, 1);
   loadA (aop, offset);
-  emit2 ("swap", "1(sp)");
+  if (aluCommutative (op))
+    {
+      emit2 (op, "1(sp)");
+      cost (1, 1);
+      adjustStack (1);
+      return;
+    }
+  emit2 ("push", "a");
+  G.stack.pushed++;
+  emit2 ("ldax", "2(sp)");
   emit2 (op, "1(sp)");
-  cost (2, 2);
-  adjustStack (1);
+  cost (3, 3);
+  adjustStack (2);
 }
 
 /*-----------------------------------------------------------------*/
@@ -1562,9 +1583,22 @@ genIpush (const iCode *ic)
 
   aopOp (left, ic);
 
-  /* A holds something else that is still needed: push it first and swap
-     the byte in underneath, so that A comes out unchanged */
+  /* A holds something else that is still needed: it is parked in the low
+     byte of IX (tax / txa) when the bytes to push do not go through IX,
+     else pushed first and each byte swapped in underneath through IX
+     (swap n(sp) is not used: on the TT07 silicon it addresses
+     sp + n - 512, see lisa_isa.md) */
   bool keep = !regDead (A_IDX, ic) && !aopInReg (left->aop, 0, A_IDX);
+  bool keep_ix = keep && left->aop->type != AOP_STL && left->aop->type != AOP_CODE &&
+                 !(left->aop->type == AOP_DIR && left->aop->aopu.far) &&
+                 !(left->aop->type == AOP_STK && stkIsFar (left->aop, left->aop->size - 1));
+  typeof (G.a) a_kept = G.a;
+  if (keep_ix)
+    {
+      emit2 ("tax", "");
+      cost (1, 1);
+      ixInvalidate ();
+    }
 
   /* bytes are pushed high to low so that the low byte ends at the lowest address */
   for (int i = left->aop->size - 1; i >= 0; i--)
@@ -1575,7 +1609,7 @@ genIpush (const iCode *ic)
          ldx sets ix_cond, which push ix puts out as bit 7 of that high
          half: only for a low byte that has the bit set already (so not
          for a symbol address, which the linker could tell but not fix) */
-      if (i >= 1 && left->aop->type == AOP_LIT && (litByte (left->aop, i - 1) & 0x80))
+      if (i >= 1 && left->aop->type == AOP_LIT && (litByte (left->aop, i - 1) & 0x80) && !keep_ix)
         {
           emit2 ("ldxs", "#0x%02x%02x", litByte (left->aop, i), litByte (left->aop, i - 1));
           emit2 ("push", "ix");
@@ -1585,8 +1619,8 @@ genIpush (const iCode *ic)
           i--;
           continue;
         }
-      if (keep)
-        pushA ();
+      if (keep && !keep_ix)
+        pushA ();                   /* the slot the byte is swapped into */
       if (left->aop->type == AOP_STL)
         {
           /* the address of a stack object, as seen after the pushes so far */
@@ -1607,13 +1641,22 @@ genIpush (const iCode *ic)
         }
       else
         loadA (left->aop, i);
-      if (keep)
+      if (keep && !keep_ix)
         {
-          emit2 ("swap", "1(sp)");
-          cost (1, 1);
+          emit2 ("spix", "");
+          emit2 ("adx", "#1");
+          emit2 ("swap", "0(ix)");
+          cost (3, 3);
+          ixInvalidate ();
         }
       else
         pushA ();
+    }
+  if (keep_ix)
+    {
+      emit2 ("txa", "");
+      cost (1, 1);
+      G.a = a_kept;             /* the same byte is back in A */
     }
 
   freeAsmop (left);
