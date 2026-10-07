@@ -285,3 +285,11 @@ replace restart {
 } by {
 	; peephole 27 removed unused label %1
 } if labelRefCount(%1 0)
+
+replace restart {
+	ads	#%1
+	ads	#%2
+} by {
+	ads	#%3
+	; peephole 28 merged ads %1 and ads %2
+} if immdInRange(-512 511 '+' %1 %2 %3)

@@ -1602,6 +1602,41 @@ genGoto (const iCode *ic)
 }
 
 /*-----------------------------------------------------------------*/
+/* genSend - the first byte parameter goes in A (lisa_reg_parm):   */
+/* SDCC emits the SEND after the pushes, right before the call     */
+/*-----------------------------------------------------------------*/
+static void
+genSend (const iCode *ic)
+{
+  operand *left = IC_LEFT (ic);
+
+  D (emit2 ("; genSend", ""));
+
+  wassertl (ic->argreg == 1, "genSend: only the first parameter travels in A");
+  aopOp (left, ic);
+  loadA (left->aop, 0);
+  freeAsmop (left);
+}
+
+/*-----------------------------------------------------------------*/
+/* genReceive - the byte parameter in A, stored to its slot in the */
+/* locals unless the allocator keeps it in A (or never reads it)   */
+/*-----------------------------------------------------------------*/
+static void
+genReceive (const iCode *ic)
+{
+  operand *result = IC_RESULT (ic);
+
+  D (emit2 ("; genReceive", ""));
+
+  wassertl (ic->argreg == 1, "genReceive: only the first parameter travels in A");
+  aopOp (result, ic);
+  if (result->aop->type != AOP_DUMMY && !aopInReg (result->aop, 0, A_IDX))
+    storeA (result->aop, 0);
+  freeAsmop (result);
+}
+
+/*-----------------------------------------------------------------*/
 /* genIpush - generate code for pushing an argument                */
 /*-----------------------------------------------------------------*/
 static void
@@ -1732,12 +1767,18 @@ genCall (const iCode *ic)
         }
       else
         {
+          /* the first parameter may already be in A (genSend) */
+          bool a_parm = FUNC_ARGS (ftype) && IS_REGPARM (FUNC_ARGS (ftype)->etype) && !IFFUNC_HASVARARGS (ftype);
+          if (a_parm)
+            pushA ();
           loadA (left->aop, 0);
           ixInvalidate ();
           emit2 ("tax", "");
           loadA (left->aop, 1);
           emit2 ("taxu", "");
           cost (2, 2);
+          if (a_parm)
+            popA ();
         }
       emit2 ("call", "ix");
       cost (1, 3);
@@ -3525,7 +3566,7 @@ genDivMod (const iCode *ic)
     }
 
   /* a signed byte (or a mixed pair) with a byte result: the library's
-     byte-returning helpers (divu.s), b pushed above a, no return slot */
+     byte-returning helpers (divu.s), b pushed and a in A, no return slot */
   if (size == 1 && lsize == 1 && rsize == 1 && !(isUnsignedOp (left) && isUnsignedOp (right)))
     {
       const char *name = !isUnsignedOp (left) && !isUnsignedOp (right) ? "schar8" :
@@ -3540,27 +3581,25 @@ genDivMod (const iCode *ic)
           pushA ();
           emit2 ("txa", "");
           cost (1, 1);
-          pushA ();
-          pushed = 2;
+          pushed = 1;
         }
       else if (a_in_A)
         {
-          /* b's load needs IX: a pushed first, b on top, a again under both */
+          /* b's load needs IX: a pushed first, b on top, a back in A (its
+             copy stays under b) */
           pushA ();
           loadA (raop, 0);
           pushA ();
           emit2 ("ldax", "2(sp)");
           cost (1, 1);
-          pushA ();
-          pushed = 3;
+          pushed = 2;
         }
       else
         {
           loadA (raop, 0);
           pushA ();
           loadA (laop, 0);
-          pushA ();
-          pushed = 2;
+          pushed = 1;
         }
       emit2 ("jal", "__%s%s", ic->op == '/' ? "div" : "mod", name);
       cost (1, 40);
@@ -5252,8 +5291,12 @@ genLisaiCodeOp (iCode *ic)
       break;
 
     case RECEIVE:
+      genReceive (ic);
+      break;
+
     case SEND:
-      wassertl (0, "Unimplemented iCode: RECEIVE / SEND");
+      genSend (ic);
+      break;
       break;
 
     case DUMMY_READ_VOLATILE:

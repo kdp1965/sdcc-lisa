@@ -40,6 +40,12 @@ with the stack handling of the stm8/z80 ports.
   `jal`), so the callee finds it at a static offset even with varargs.
 * Parameters are pushed right to left, little endian (high byte pushed first), so
   the first parameter is at the lowest address.  The caller pops them.
+  Except the first one when it is a byte: it travels in A (`lisa_reg_parm`,
+  SDCC's SEND right before the call, RECEIVE first in the callee, which stores
+  it to a slot in its locals if it needs it in memory).  Variadic, unprototyped
+  and `__sdcccall(0)` functions keep everything on the stack - inline asm that
+  reads parameters from the stack wants `__sdcccall(0)`.  The library's byte
+  division helpers follow the convention (a in A).
   Callee frame, seen from the callee's SP after the prologue (`sra` if non-leaf,
   `ads -L` for L bytes of locals):
 
@@ -359,6 +365,22 @@ which the cast truncates exactly as the helpers do; a literal of the
 other signedness (a signed char by 200, an unsigned one by -3) is the
 mixed helper.  `a / 7` on a signed char: 28 words (sign extension, four
 pushes, `__divsint`, the slot copies) to 9.  test_signed 28-29.
+
+The first byte parameter in A (2026-10-07): `lisa_reg_parm` claims the
+first parameter when it is a byte (SDCC's register-parameter machinery:
+`options.sdcccall = 1`, the SEND emitted right before the call since
+SDCC walks the parameters last to first, the RECEIVE first in the
+callee), `genSend` loads A, `genReceive` stores it to the parameter's
+slot in the locals unless the allocator keeps it in A or never reads
+it, and `genCall` keeps A across the IX load of a function-pointer
+call.  Variadic, unprototyped and `__sdcccall(0)` functions stay on the
+stack (inline asm that reads parameters from the stack wants
+`__sdcccall(0)`: test_aluprobe).  The library's byte division helpers
+take a in A, and genDivMod's own calls of the byte-returning ones push
+b only.  `putc('x')`: `ldi; jal` for `ldi; push; jal; ads #1`; the test
+corpus (15 programs with the library) 34214 to 33521 words, -2.0%.
+Peephole 28 merges adjacent `ads` (`ads` takes a 10-bit immediate:
+`S_SIMM10` in sdaslisa, the ISA doc said 8).
 
 Not done / next:
 * `__critical` is just eidi (no interrupt state to save: `ie` cannot be

@@ -1,7 +1,8 @@
 ;--------------------------------------------------------------------------
 ;  divu.s - _divuint() / _moduint() / _divsint() / _modsint() and the
-;  eight byte helpers (_divschar() ... _modsuchar()) on the hardware
-;  divider, for the LISA port
+;  byte helpers (_divschar() ... _modsuchar(), and the byte-returning
+;  _divschar8() ... _modsuchar8()) on the hardware divider, for the
+;  LISA port
 ;
 ;  Copyright (C) 2026
 ;
@@ -173,16 +174,18 @@ done16:
 ; result is |a| / |b| (|a| and |b| taken in place, div 3 / rem 3), at
 ; most 255, or its 16-bit negation when the signs say so.  The unsigned
 ; pair is here for the shape the compiler cannot inline (a _BitInt).
-; Frame after sra and the flag push: 1(sp) the flag - bit 7 negate the
-; result, bit 0 remainder; RA 2,3; the return slot 4,5; a 6(sp); b 7(sp).
+; a comes in A (the first byte parameter, lisa_reg_parm), b on the
+; stack.  Frame after sra, the push of a and the flag push: 1(sp) the
+; flag - bit 7 negate the result, bit 0 remainder; a 2(sp); RA 3,4; the
+; return slot 5,6; b 7(sp).
 
 	.globl __divschar, __modschar, __divuchar, __moduchar
 	.globl __divsuchar, __modsuchar, __divuschar, __moduschar
 
 __divschar:
 	sra
-	ldax	5(sp)			; the signs differ: a negative quotient
-	xor	6(sp)
+	push	a			; a 1(sp); RA 2,3; slot 4,5; b 6(sp)
+	xor	6(sp)			; the signs differ: a negative quotient
 	andi	#0x80
 	push	a
 	jal	absa
@@ -190,8 +193,8 @@ __divschar:
 	br	div8
 __modschar:
 	sra
-	ldax	5(sp)			; the dividend's sign is the remainder's
-	andi	#0x80
+	push	a
+	andi	#0x80			; the dividend's sign is the remainder's
 	ldc	#0
 	adc	#0x01
 	push	a
@@ -200,14 +203,14 @@ __modschar:
 	br	div8
 __divuschar:				; a signed, b unsigned
 	sra
-	ldax	5(sp)
+	push	a
 	andi	#0x80
 	push	a
 	jal	absa
 	br	div8
 __moduschar:
 	sra
-	ldax	5(sp)
+	push	a
 	andi	#0x80
 	ldc	#0
 	adc	#0x01
@@ -216,6 +219,7 @@ __moduschar:
 	br	div8
 __divsuchar:				; a unsigned, b signed
 	sra
+	push	a
 	ldax	6(sp)
 	andi	#0x80
 	push	a
@@ -223,21 +227,24 @@ __divsuchar:				; a unsigned, b signed
 	br	div8
 __modsuchar:				; a non-negative dividend: a non-negative remainder
 	sra
+	push	a
 	ldi	#0x01
 	push	a
 	jal	absb
 	br	div8
 __divuchar:
 	sra
+	push	a
 	ldi	#0x00
 	push	a
 	br	div8
 __moduchar:
 	sra
+	push	a
 	ldi	#0x01
 	push	a
 div8:
-	ldax	6(sp)
+	ldax	2(sp)
 	tax				; the 8-bit dividend
 	ldax	1(sp)
 	btst	0
@@ -247,29 +254,29 @@ div8:
 	br	2$
 1$:	ldax	7(sp)
 	rem	3
-2$:	stax	4(sp)			; the result, 0..255, as an int
+2$:	stax	5(sp)			; the result, 0..255, as an int
 	ldi	#0x00
-	stax	5(sp)
+	stax	6(sp)
 	ldax	1(sp)
 	btst	7
 	bnz	3$
 	spix
-	adx	#4
+	adx	#5
 	jal	neg2			; negated as 16 bits
-3$:	ads	#1
+3$:	ads	#2
 	lra
 	ret
 
 ; a = |a|, b = |b| (the frame above; a jal moves no stack)
 absa:
-	ldax	6(sp)
+	ldax	2(sp)
 	btst	7
 	bnz	9$
 	ldi	#0xff
-	sub	6(sp)
+	sub	2(sp)
 	ldc	#1
 	adc	#0x00
-	stax	6(sp)
+	stax	2(sp)
 9$:	ret
 absb:
 	ldax	7(sp)
@@ -285,16 +292,16 @@ absb:
 ; ---- bytes, a byte back in A -------------------------------------------
 ;
 ; The same when the compiler only wants a byte (genDivMod: a / b of two
-; chars with a char result): no return slot, the result in A, 128 is
-; 0x80.  Frame after sra and the flag push: 1(sp) the flag; RA 2,3; a
-; 4(sp); b 5(sp).
+; chars with a char result, a in A and b pushed, no return slot): the
+; result in A, 128 is 0x80.  Frame after sra, the push of a and the
+; flag push: 1(sp) the flag; a 2(sp); RA 3,4; b 5(sp).
 
 	.globl __divschar8, __modschar8, __divuschar8, __moduschar8
 	.globl __divsuchar8, __modsuchar8
 
 __divschar8:
 	sra
-	ldax	3(sp)
+	push	a			; a 1(sp); RA 2,3; b 4(sp)
 	xor	4(sp)
 	andi	#0x80
 	push	a
@@ -303,7 +310,7 @@ __divschar8:
 	br	div8b
 __modschar8:
 	sra
-	ldax	3(sp)
+	push	a
 	andi	#0x80
 	ldc	#0
 	adc	#0x01
@@ -313,14 +320,14 @@ __modschar8:
 	br	div8b
 __divuschar8:				; a signed, b unsigned
 	sra
-	ldax	3(sp)
+	push	a
 	andi	#0x80
 	push	a
 	jal	absa8
 	br	div8b
 __moduschar8:
 	sra
-	ldax	3(sp)
+	push	a
 	andi	#0x80
 	ldc	#0
 	adc	#0x01
@@ -329,19 +336,21 @@ __moduschar8:
 	br	div8b
 __divsuchar8:				; a unsigned, b signed
 	sra
+	push	a
 	ldax	4(sp)
 	andi	#0x80
 	push	a
 	jal	absb8
 	br	div8b
-__modsuchar8:
+__modsuchar8:				; a non-negative dividend: a non-negative remainder
 	sra
+	push	a
 	ldi	#0x01
 	push	a
 	jal	absb8
 div8b:
-	ldax	4(sp)
-	tax
+	ldax	2(sp)
+	tax				; the 8-bit dividend
 	ldax	1(sp)
 	btst	0
 	bz	1$			; Z = bit 0: remainder
@@ -350,29 +359,29 @@ div8b:
 	br	2$
 1$:	ldax	5(sp)
 	rem	3
-2$:	stax	4(sp)			; the result, negated in place when the signs say so
+2$:	stax	2(sp)			; the result, negated in place when the signs say so
 	ldax	1(sp)
 	btst	7
 	bnz	3$
 	ldi	#0xff
-	sub	4(sp)
+	sub	2(sp)
 	ldc	#1
 	adc	#0x00
 	br	4$
-3$:	ldax	4(sp)
-4$:	ads	#1
+3$:	ldax	2(sp)
+4$:	ads	#2
 	lra
 	ret
 
 absa8:
-	ldax	4(sp)
+	ldax	2(sp)
 	btst	7
 	bnz	9$
 	ldi	#0xff
-	sub	4(sp)
+	sub	2(sp)
 	ldc	#1
 	adc	#0x00
-	stax	4(sp)
+	stax	2(sp)
 9$:	ret
 absb8:
 	ldax	5(sp)

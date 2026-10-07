@@ -239,15 +239,34 @@ lisa_init (void)
   lisa_init_asmops ();
 }
 
+/* The first parameter travels in A when it is a byte - what the caller
+   would have pushed last (SEND right before the call, RECEIVE first in
+   the callee, which stores it to its slot in the locals if it needs it in
+   memory).  Variadic, unprototyped and __sdcccall(0) functions keep
+   everything on the stack. */
+static struct
+{
+  sym_link *ftype;
+  int n;
+} regparam;
+
 static void
 lisa_reset_regparm (struct sym_link *funcType)
 {
+  regparam.ftype = funcType;
+  regparam.n = 0;
 }
 
 static int
 lisa_reg_parm (sym_link *l, bool reentrant)
 {
-  return (0);
+  if (++regparam.n != 1 || !regparam.ftype)
+    return (0);
+  if (FUNC_SDCCCALL (regparam.ftype) == 0 || IFFUNC_HASVARARGS (regparam.ftype) || FUNC_NOPROTOTYPE (regparam.ftype))
+    return (0);
+  if (getSize (l) != 1 || IS_STRUCT (l))
+    return (0);
+  return (1);
 }
 
 /* --bf16-float: float arithmetic on the core's bfloat16 unit.  The type
@@ -377,6 +396,7 @@ lisa_setDefaultOptions (void)
   options.stack_loc = -1;       /* default: below the end of the DATA areas (s_SSEG) */
   options.nopeep = 0;
   options.stackAuto = 1;        /* everything lives on the stack */
+  options.sdcccall = 1;         /* but a first byte parameter in A (lisa_reg_parm); __sdcccall(0) for all on the stack */
 }
 
 static const char *
