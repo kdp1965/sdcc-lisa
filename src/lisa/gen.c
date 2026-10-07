@@ -3524,6 +3524,52 @@ genDivMod (const iCode *ic)
       goto release;
     }
 
+  /* a signed byte (or a mixed pair) with a byte result: the library's
+     byte-returning helpers (divu.s), b pushed above a, no return slot */
+  if (size == 1 && lsize == 1 && rsize == 1 && !(isUnsignedOp (left) && isUnsignedOp (right)))
+    {
+      const char *name = !isUnsignedOp (left) && !isUnsignedOp (right) ? "schar8" :
+                         !isUnsignedOp (left) ? "uschar8" : "suchar8";
+      bool a_in_A = aopInReg (laop, 0, A_IDX);
+      if (a_in_A && raop->type != AOP_CODE && raop->type != AOP_STL)
+        {
+          /* a parked in IX's low byte while b is loaded (b needs no IX) */
+          emit2 ("tax", "");
+          cost (1, 1);
+          loadA (raop, 0);
+          pushA ();
+          emit2 ("txa", "");
+          cost (1, 1);
+          pushA ();
+          pushed = 2;
+        }
+      else if (a_in_A)
+        {
+          /* b's load needs IX: a pushed first, b on top, a again under both */
+          pushA ();
+          loadA (raop, 0);
+          pushA ();
+          emit2 ("ldax", "2(sp)");
+          cost (1, 1);
+          pushA ();
+          pushed = 3;
+        }
+      else
+        {
+          loadA (raop, 0);
+          pushA ();
+          loadA (laop, 0);
+          pushA ();
+          pushed = 2;
+        }
+      emit2 ("jal", "__%s%s", ic->op == '/' ? "div" : "mod", name);
+      cost (1, 40);
+      ixInvalidate ();
+      adjustStack (pushed);
+      storeA (result->aop, 0);
+      goto release;
+    }
+
   /* the divisor is loaded after the dividend sits in IX / RA: a code
      space read (call ix) or a stack address (spix) would clobber them,
      and a byte in A has to be taken now */

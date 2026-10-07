@@ -346,10 +346,21 @@ parameter included (nothing coalesces temporaries on a one-register
 target).  `rd_scc` in test_ptroff: 29 words to 9; `(unsigned int)(l >>
 16)`: 18 to 5.
 
+Byte division with a byte result (2026-10-07): `_hasNativeMulFor` keeps
+a signed or mixed byte pair with a byte result, and genDivMod calls the
+byte-returning `__divschar8` family (divu.s: a byte back in A, no return
+slot) - `push b; push a; jal; ads #2`, 6 words for the 9 of the
+int-returning call; a dividend already in A is parked in IX's low byte
+while b is loaded.  And `lisaNarrowByteDiv` (SDCCopt.c, before
+convertToFcall) turns `(T8)((int)a / k)` and `%` - the C promotion
+around a char divided by a literal that fits a byte - back into the byte
+operation: the int quotient of two bytes fits a byte, bar 128 and -255,
+which the cast truncates exactly as the helpers do; a literal of the
+other signedness (a signed char by 200, an unsigned one by -3) is the
+mixed helper.  `a / 7` on a signed char: 28 words (sign extension, four
+pushes, `__divsint`, the slot copies) to 9.  test_signed 28-29.
+
 Not done / next:
-* Code quality: a char-result byte division could skip the return slot
-  (6 words at the call site instead of 9) if genDivMod called a
-  byte-returning helper of its own.
 * `__critical` is just eidi (no interrupt state to save: `ie` cannot be
   read).
 

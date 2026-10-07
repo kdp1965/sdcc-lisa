@@ -282,6 +282,109 @@ absb:
 	stax	7(sp)
 9$:	ret
 
+; ---- bytes, a byte back in A -------------------------------------------
+;
+; The same when the compiler only wants a byte (genDivMod: a / b of two
+; chars with a char result): no return slot, the result in A, 128 is
+; 0x80.  Frame after sra and the flag push: 1(sp) the flag; RA 2,3; a
+; 4(sp); b 5(sp).
+
+	.globl __divschar8, __modschar8, __divuschar8, __moduschar8
+	.globl __divsuchar8, __modsuchar8
+
+__divschar8:
+	sra
+	ldax	3(sp)
+	xor	4(sp)
+	andi	#0x80
+	push	a
+	jal	absa8
+	jal	absb8
+	br	div8b
+__modschar8:
+	sra
+	ldax	3(sp)
+	andi	#0x80
+	ldc	#0
+	adc	#0x01
+	push	a
+	jal	absa8
+	jal	absb8
+	br	div8b
+__divuschar8:				; a signed, b unsigned
+	sra
+	ldax	3(sp)
+	andi	#0x80
+	push	a
+	jal	absa8
+	br	div8b
+__moduschar8:
+	sra
+	ldax	3(sp)
+	andi	#0x80
+	ldc	#0
+	adc	#0x01
+	push	a
+	jal	absa8
+	br	div8b
+__divsuchar8:				; a unsigned, b signed
+	sra
+	ldax	4(sp)
+	andi	#0x80
+	push	a
+	jal	absb8
+	br	div8b
+__modsuchar8:
+	sra
+	ldi	#0x01
+	push	a
+	jal	absb8
+div8b:
+	ldax	4(sp)
+	tax
+	ldax	1(sp)
+	btst	0
+	bz	1$			; Z = bit 0: remainder
+	ldax	5(sp)
+	div	3
+	br	2$
+1$:	ldax	5(sp)
+	rem	3
+2$:	stax	4(sp)			; the result, negated in place when the signs say so
+	ldax	1(sp)
+	btst	7
+	bnz	3$
+	ldi	#0xff
+	sub	4(sp)
+	ldc	#1
+	adc	#0x00
+	br	4$
+3$:	ldax	4(sp)
+4$:	ads	#1
+	lra
+	ret
+
+absa8:
+	ldax	4(sp)
+	btst	7
+	bnz	9$
+	ldi	#0xff
+	sub	4(sp)
+	ldc	#1
+	adc	#0x00
+	stax	4(sp)
+9$:	ret
+absb8:
+	ldax	5(sp)
+	btst	7
+	bnz	9$
+	ldi	#0xff
+	sub	5(sp)
+	ldc	#1
+	adc	#0x00
+	stax	5(sp)
+9$:	ret
+
 ; the two bytes at IX negated: ~x + 1 with the carry through adc #0 (ldi
 ; clears C for the sub, whose own C the TT07 gets wrong; stax keeps it)
 neg2:

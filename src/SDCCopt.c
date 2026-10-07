@@ -3188,6 +3188,94 @@ offsetFoldUse (eBBlock **ebbs, int count)
     }
 }
 
+/* The block an iCode is in, for removing it. */
+static void
+lisaRemoveiCode (eBBlock **ebbs, int count, iCode *ic)
+{
+  for (int i = 0; i < count; i++)
+    if (ic->seq >= ebbs[i]->fSeq && ic->seq <= ebbs[i]->lSeq)
+      {
+        remiCodeFromeBBlock (ebbs[i], ic);
+        hTabDeleteItem (&iCodehTab, ic->key, ic, DELETE_ITEM, NULL);
+        return;
+      }
+}
+
+/*-----------------------------------------------------------------*/
+/* lisaNarrowByteDiv - (T8)((int)a / k) and % with an 8-bit a and a */
+/* literal k that fits an 8-bit type are the 8-bit operation: the   */
+/* int quotient of two 8-bit values fits a byte, bar 128 and -255,  */
+/* which the cast truncates the way the byte helpers (divu.s) do;  */
+/* a literal of the other signedness (a signed a by 200, an        */
+/* unsigned a by -3) is the mixed-signedness helper.  Before        */
+/* convertToFcall, so that the division stays the port's.          */
+/*-----------------------------------------------------------------*/
+static void
+lisaNarrowByteDiv (eBBlock **ebbs, int count)
+{
+  if (!TARGET_IS_LISA)
+    return;
+
+  for (int i = 0; i < count; i++)
+    for (iCode *ic = ebbs[i]->sch; ic; ic = ic->next)
+      {
+        if (ic->op != '/' && ic->op != '%' || !IS_ITEMP (IC_RESULT (ic)) || !IS_ITEMP (IC_LEFT (ic)) || !IS_OP_LITERAL (IC_RIGHT (ic)))
+          continue;
+        sym_link *wtype = operandType (IC_LEFT (ic));
+        if (!IS_INTEGRAL (wtype) || getSize (wtype) != 2 || SPEC_USIGN (getSpec (wtype)))
+          continue;
+        if (bitVectnBitsOn (OP_DEFS (IC_LEFT (ic))) != 1 || bitVectnBitsOn (OP_USES (IC_LEFT (ic))) != 1 ||
+          bitVectnBitsOn (OP_DEFS (IC_RESULT (ic))) != 1 || bitVectnBitsOn (OP_USES (IC_RESULT (ic))) != 1)
+          continue;
+        iCode *cic = hTabItemWithKey (iCodehTab, bitVectFirstBit (OP_DEFS (IC_LEFT (ic))));
+        iCode *uic = hTabItemWithKey (iCodehTab, bitVectFirstBit (OP_USES (IC_RESULT (ic))));
+        if (!cic || cic->op != CAST || !IS_SYMOP (IC_RIGHT (cic)) || IS_OP_VOLATILE (IC_RIGHT (cic)))
+          continue;
+        sym_link *atype = operandType (IC_RIGHT (cic));
+        if (!IS_INTEGRAL (atype) || getSize (atype) != 1 || IS_BOOLEAN (atype) || IS_BITVAR (atype))
+          continue;
+        if (!uic || uic->op != CAST || !IS_SYMOP (IC_RIGHT (uic)) || OP_SYMBOL (IC_RIGHT (uic)) != OP_SYMBOL (IC_RESULT (ic)))
+          continue;
+        sym_link *rtype = operandType (IC_RESULT (uic));
+        if (!IS_INTEGRAL (rtype) || getSize (rtype) != 1 || IS_BOOLEAN (rtype) || IS_BITVAR (rtype))
+          continue;
+
+        long long k = (long long) operandLitValue (IC_RIGHT (ic));
+        bool ausign = SPEC_USIGN (getSpec (atype)), kusign;
+        if (!k)
+          continue;
+        if (k >= -128 && k <= 127)
+          kusign = ausign && k >= 0;
+        else if (k >= 128 && k <= 255)
+          kusign = true;
+        else
+          continue;
+
+        /* the byte operands */
+        operand *a = operandFromOperand (IC_RIGHT (cic));
+        bitVectUnSetBit (OP_USES (IC_LEFT (ic)), ic->key);
+        IC_LEFT (ic) = a;
+        bitVectSetBit (OP_USES (a), ic->key);
+        sym_link *ktype = newCharLink ();
+        SPEC_USIGN (ktype) = kusign;
+        IC_RIGHT (ic) = operandFromValue (valCastLiteral (ktype, (double) k, (TYPE_TARGET_ULONGLONG) k), false);
+        /* the result is the cast's byte */
+        operand *res = IC_RESULT (uic);
+        bitVectUnSetBit (OP_USES (IC_RESULT (ic)), uic->key);
+        bitVectUnSetBit (OP_DEFS (IC_RESULT (ic)), ic->key);
+        if (IS_SYMOP (res))
+          {
+            bitVectUnSetBit (OP_DEFS (res), uic->key);
+            bitVectSetBit (OP_DEFS (res), ic->key);
+          }
+        IC_RESULT (ic) = res;
+        /* the two casts go */
+        unsetDefsAndUses (cic);
+        lisaRemoveiCode (ebbs, count, cic);
+        lisaRemoveiCode (ebbs, count, uic);
+      }
+}
+
 /*-----------------------------------------------------------------*/
 /* guessCounts - Guess execution counts for iCodes                 */
 /* Needs ic->seq assigned (typically done by computeLiveRanges()   */
@@ -3581,6 +3669,7 @@ eBBlockFromiCode (iCode *ic)
   computeDataFlow (ebbi);
   killDeadCode (ebbi);
   offsetFoldUse (ebbi->bbOrder, ebbi->count);
+  lisaNarrowByteDiv (ebbi->bbOrder, ebbi->count);
   killDeadCode (ebbi);
 
   /* sort it back by block number */

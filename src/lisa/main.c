@@ -400,9 +400,13 @@ _hasNativeMulFor (iCode *ic, sym_link *left, sym_link *right)
      handler); the signed helpers in the library work on magnitudes */
   if (ic->op == '/' || ic->op == '%')
     {
-      if (result_size > 2 || getSize (left) > 2 || getSize (right) > 2 ||
-          !IS_SPEC (left) || !SPEC_USIGN (left) || !IS_SPEC (right) || !SPEC_USIGN (right))
+      if (result_size > 2 || getSize (left) > 2 || getSize (right) > 2 || !IS_SPEC (left) || !IS_SPEC (right))
         return (false);
+      /* two bytes with a byte result: genDivMod calls the library's
+         byte-returning helpers for the signed and mixed pairs (no
+         return slot); otherwise signed means the int-returning ones */
+      if (!SPEC_USIGN (left) || !SPEC_USIGN (right))
+        return (result_size == 1 && getSize (left) == 1 && getSize (right) == 1);
       /* a 16-bit result's high byte comes from RA, 15 bits: a quotient
          by 1 (the TT07 silicon leaves its high byte 0 there) and a
          remainder of 0x8000 or more (by a divisor above 0x8000) cannot
