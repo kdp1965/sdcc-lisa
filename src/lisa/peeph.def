@@ -293,3 +293,9 @@ replace restart {
 	ads	#%3
 	; peephole 28 merged ads %1 and ads %2
 } if immdInRange(-512 511 '+' %1 %2 %3)
+
+replace restart {
+	ads	#0
+} by {
+	; peephole 29 removed ads #0
+}
