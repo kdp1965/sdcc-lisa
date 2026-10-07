@@ -436,7 +436,27 @@ _hasNativeMulFor (iCode *ic, sym_link *left, sym_link *right)
 static bool
 hasExtBitOp (int op, sym_link *left, int right)
 {
-  return (op == GETBYTE);
+  int size = getSize (left);
+
+  switch (op)
+    {
+    case GETBYTE:
+    case GETWORD:
+      return (true);
+    case ROT:
+      /* genRot: a byte by any count (shl / shr rotate through C), a
+         word by 1, 8 or 15, a long by 16 (the halves swapped) */
+      if (bitsForType (left) % 8)
+        return (false);
+      if (size == 1)
+        return (true);
+      if (size == 2)
+        return (right % 16 == 1 || right % 16 == 8 || right % 16 == 15);
+      if (size == 4)
+        return (right % 32 == 16);
+      return (false);
+    }
+  return (false);
 }
 
 static const char *

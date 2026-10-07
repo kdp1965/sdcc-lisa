@@ -4579,6 +4579,156 @@ genGetByte (const iCode *ic)
 }
 
 /*-----------------------------------------------------------------*/
+/* genGetWord - extract a word (a right shift by a multiple of 8   */
+/* of a long, SDCCast's optimizeGetWord)                           */
+/*-----------------------------------------------------------------*/
+static void
+genGetWord (const iCode *ic)
+{
+  operand *result = IC_RESULT (ic);
+  operand *left = IC_LEFT (ic);
+  operand *right = IC_RIGHT (ic);
+  int offset;
+
+  D (emit2 ("; genGetWord", ""));
+
+  aopOp (left, ic);
+  aopOp (right, ic);
+  aopOp (result, ic);
+
+  offset = (int) ulFromVal (right->aop->aopu.aop_lit) / 8;
+  /* low byte first: over the source, byte 0 is read before it is written */
+  cheapMove (result->aop, 0, left->aop, offset);
+  cheapMove (result->aop, 1, left->aop, offset + 1);
+
+  freeAsmop (result);
+  freeAsmop (right);
+  freeAsmop (left);
+}
+
+/*-----------------------------------------------------------------*/
+/* genRot - rotate left by the literal s of SDCCast's optimizeROT: */
+/* a byte by any count, a word by 1, 8 or 15, a long by 16 (what   */
+/* hasExtBitOp claims)                                             */
+/*-----------------------------------------------------------------*/
+static void
+genRot (const iCode *ic)
+{
+  operand *result = IC_RESULT (ic);
+  operand *left = IC_LEFT (ic);
+  operand *right = IC_RIGHT (ic);
+
+  D (emit2 ("; genRot", ""));
+
+  aopOp (left, ic);
+  aopOp (right, ic);
+  aopOp (result, ic);
+
+  int size = left->aop->size;
+  int s = (int) ulFromVal (right->aop->aopu.aop_lit) % (size * 8);
+  bool same = aopSame (result->aop, 0, left->aop, 0, size);
+
+  if (size == 1)
+    {
+      /* shl / shr rotate through C (amode 1).  Left by s: C cleared
+         once, then shl and the carry added at the bottom s times (adc
+         #0 never carries, bit 0 is clear).  Right by r: a shr for C =
+         bit 0 and a shr of the value again, r times.  The shorter one. */
+      int r = 8 - s;
+      loadA (left->aop, 0);
+      if (1 + 2 * s <= 4 * r)
+        {
+          emit2 ("ldc", "#0");
+          cost (1, 1);
+          for (int i = 0; i < s; i++)
+            {
+              emit2 ("shl", "");
+              emit2 ("adc", "#0x00");
+              cost (2, 2);
+            }
+        }
+      else
+        for (int i = 0; i < r; i++)
+          {
+            pushA ();
+            emit2 ("shr", "");
+            cost (1, 1);
+            popA ();
+            emit2 ("shr", "");
+            cost (1, 1);
+          }
+      storeA (result->aop, 0);
+    }
+  else if (size == 2 && s == 1)
+    {
+      /* the low byte's top bit through C into the high byte, the high
+         byte's into the low byte's bottom */
+      emit2 ("ldc", "#0");
+      cost (1, 1);
+      loadA (left->aop, 0);
+      emit2 ("shl", "");
+      cost (1, 1);
+      storeA (result->aop, 0);
+      loadA (left->aop, 1);
+      emit2 ("shl", "");
+      cost (1, 1);
+      storeA (result->aop, 1);
+      loadA (result->aop, 0);
+      emit2 ("adc", "#0x00");
+      cost (1, 1);
+      storeA (result->aop, 0);
+    }
+  else if (size == 2 && s == 15)
+    {
+      /* right by 1: C = the low byte's bit 0 (the shifted A is dropped),
+         then the high byte and the low byte shifted right through it */
+      loadA (left->aop, 0);
+      emit2 ("shr", "");
+      cost (1, 1);
+      loadA (left->aop, 1);
+      emit2 ("shr", "");
+      cost (1, 1);
+      storeA (result->aop, 1);
+      loadA (left->aop, 0);
+      emit2 ("shr", "");
+      cost (1, 1);
+      storeA (result->aop, 0);
+    }
+  else
+    {
+      /* by half the width: the halves swapped (through the stack when
+         the result is over the source) */
+      int half = size / 2;
+      wassertl (s == half * 8, "genRot: unsupported rotation");
+      if (same)
+        {
+          for (int i = 0; i < half; i++)
+            {
+              loadA (left->aop, i);
+              pushA ();
+            }
+          for (int i = 0; i < half; i++)
+            cheapMove (result->aop, i, left->aop, half + i);
+          for (int i = half - 1; i >= 0; i--)
+            {
+              popA ();
+              storeA (result->aop, half + i);
+            }
+        }
+      else
+        for (int i = 0; i < half; i++)
+          {
+            cheapMove (result->aop, i, left->aop, half + i);
+            cheapMove (result->aop, half + i, left->aop, i);
+          }
+    }
+
+  freeAsmop (result);
+  freeAsmop (right);
+  freeAsmop (left);
+}
+
+/*-----------------------------------------------------------------*/
 /* genDummyRead - generate code for dummy read of volatiles        */
 /*-----------------------------------------------------------------*/
 static void
@@ -4981,11 +5131,11 @@ genLisaiCodeOp (iCode *ic)
       break;
 
     case GETWORD:
-      wassertl (0, "Unimplemented iCode: GETWORD");
+      genGetWord (ic);
       break;
 
     case ROT:
-      wassertl (0, "Unimplemented iCode: ROT");
+      genRot (ic);
       break;
 
     case LEFT_OP:

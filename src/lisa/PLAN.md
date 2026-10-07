@@ -336,9 +336,21 @@ Not done / next:
   to the return slot (`rd_scc` in test_ptroff.asm); a char-result byte
   division could skip the return slot (6 words at the call site instead
   of 9) if genDivMod called a byte-returning helper of its own.
-* `ROT` and `GETWORD` are not claimed (`hasExtBitOp`: GETBYTE only), so
-  SDCC lowers them itself; `__critical` is just eidi (no interrupt state
-  to save: `ie` cannot be read).
+* `__critical` is just eidi (no interrupt state to save: `ie` cannot be
+  read).
+
+ROT and GETWORD (2026-10-07): `hasExtBitOp` claims GETWORD (two byte
+moves, genGetWord: `(unsigned int)(l >> 16)` was 18 words of copies) and
+ROT for a byte by any count, a word by 1, 8 or 15 and a long by 16
+(genRot).  `shl` / `shr` rotate through C under the port's amode 1, so a
+byte rotated left by s is `ldc #0` and s times `shl; adc #0` (the adc
+never carries, bit 0 is clear), right by r is r times `push a; shr; pop
+a; shr` (the first shr only fetches bit 0 into C), whichever is shorter;
+a word by 1 chains the two shl with the carry added to the low byte, by
+15 fetches the low byte's bit 0 into C and shifts the high then the low
+byte right through it; by half the width the halves are swapped (through
+the stack when the result is over the source).  `(x << 1) | (x >> 7)` on
+a byte went from 17 words to 3.  test_rot.
 * Interrupt handlers: `__interrupt(n)` works on a core with sane interrupt
   semantics (`lisa_sim --fixed-irq`, `test_irq.c`); on the TT07 silicon an
   interrupt after an `if*` or inside an `ldx` corrupts execution
