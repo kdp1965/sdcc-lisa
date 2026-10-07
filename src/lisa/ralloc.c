@@ -148,6 +148,17 @@ copyHome (symbol *sym)
   return (!h || noOverLap (h->temps, sym)) ? src : NULL;
 }
 
+/* A result of two bytes that is not a struct comes back in IX (ldxx /
+   stxx move it in one word, a pointer's tag riding along in ix_cond),
+   unless the function is __sdcccall(0); a byte comes back in A; anything
+   else in the slot the caller reserves above the return address. */
+bool
+lisaRetInIX (sym_link *ftype)
+{
+  sym_link *rtype = ftype->next;
+  return (getSize (rtype) == 2 && !IS_STRUCT (rtype) && FUNC_SDCCCALL (ftype) != 0);
+}
+
 /* A temporary that exists only to be returned: one definition, in the
    iCode right before the RETURN that is its one use (so no other
    returned temporary's definition can come between them), of the size of
@@ -161,7 +172,7 @@ lisaRetSlotTemp (const symbol *sym)
     return (false);
   sym_link *rtype = currFunc->type->next;
   int retsize = getSize (rtype);
-  if (!(retsize > 1 || IS_STRUCT (rtype)) || getSize (sym->type) != retsize)
+  if (!(retsize > 1 || IS_STRUCT (rtype)) || lisaRetInIX (currFunc->type) || getSize (sym->type) != retsize)
     return (false);
   if (bitVectnBitsOn (sym->defs) != 1 || bitVectnBitsOn (sym->uses) != 1)
     return (false);
@@ -176,6 +187,29 @@ lisaRetSlotTemp (const symbol *sym)
   return (true);
 }
 
+/* The result of a call that comes back in IX and goes straight out again
+   as this function's result in IX (the RETURN right after the call is
+   the temporary's one use): it never leaves IX, so it needs no spill
+   location - genCall stores nothing, genReturn loads nothing. */
+bool
+lisaRetIXTemp (const symbol *sym)
+{
+  if (!currFunc || !sym || !sym->isitmp || sym->_isparm || sym->remat || !lisaRetInIX (currFunc->type))
+    return (false);
+  if (getSize (sym->type) != 2 || bitVectnBitsOn (sym->defs) != 1 || bitVectnBitsOn (sym->uses) != 1)
+    return (false);
+  const iCode *dic = hTabItemWithKey (iCodehTab, bitVectFirstBit (sym->defs));
+  const iCode *uic = hTabItemWithKey (iCodehTab, bitVectFirstBit (sym->uses));
+  if (!dic || !uic || (dic->op != CALL && dic->op != PCALL) || uic->op != RETURN || dic->next != uic)
+    return (false);
+  if (!IC_RESULT (dic) || !IS_SYMOP (IC_RESULT (dic)) || OP_SYMBOL (IC_RESULT (dic)) != sym)
+    return (false);
+  if (!IC_LEFT (uic) || !IS_SYMOP (IC_LEFT (uic)) || OP_SYMBOL (IC_LEFT (uic)) != sym)
+    return (false);
+  sym_link *dtype = operandType (IC_LEFT (dic));
+  return (lisaRetInIX (IS_FUNCPTR (dtype) ? dtype->next : dtype));
+}
+
 static symbol *
 createStackSpil (symbol *sym)
 {
@@ -183,8 +217,8 @@ createStackSpil (symbol *sym)
   symbol *sloc = 0;
   struct dbuf_s dbuf;
 
-  /* the return slot is its place: no spill location */
-  if (lisaRetSlotTemp (sym))
+  /* the return slot, or IX straight through, is its place: no spill location */
+  if (lisaRetSlotTemp (sym) || lisaRetIXTemp (sym))
     return sym;
 
   /* born as a copy: the place of what it copies */

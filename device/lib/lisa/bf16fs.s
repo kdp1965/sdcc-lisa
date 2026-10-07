@@ -80,7 +80,7 @@ fs_take:
 	taxu
 	ret
 
-; the operands onto the stack: b, then a, then the return slot
+; the operands onto the stack: b, then a (the bf16_t result comes back in IX)
 .macro	ARGS
 	sra
 	spix
@@ -91,19 +91,19 @@ fs_take:
 	adx	#9
 	jal	fs_round
 	push	ix		; a
-	ads	#-2
 .endm
 
-; the bf16_t result at 1,2(sp) into the float's top half (now 9..12(sp))
+; the bf16_t result in IX into the float's top half (now 9,10(sp): a 1,2;
+; b 3,4; RA 5,6; the float's slot 7..10)
 .macro	RESULT
-	ldax	1(sp)
-	stax	11(sp)
-	ldax	2(sp)
-	stax	12(sp)
-	ldi	#0x00
+	txa
 	stax	9(sp)
+	txau
 	stax	10(sp)
-	ads	#6
+	ldi	#0x00
+	stax	7(sp)
+	stax	8(sp)
+	ads	#4
 	lra
 	ret
 .endm
@@ -117,10 +117,10 @@ ___fsadd:
 	.globl ___fssub
 ___fssub:
 	ARGS
-	ldax	6(sp)		; b's sign
+	ldax	4(sp)		; b's sign
 	ldc	#0
 	adc	#0x80
-	stax	6(sp)
+	stax	4(sp)
 	jal	_bf16_add
 	RESULT
 

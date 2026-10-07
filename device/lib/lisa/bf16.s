@@ -35,31 +35,31 @@
 ; scratch: nothing is kept in them between calls.
 ;
 ; Frames (no RA to save: leaf functions, the unit does not touch RA or
-; IX): bf16_t f(bf16_t a, bf16_t b) has its return slot at 1(sp),2(sp),
-; a at 3(sp),4(sp), b at 5(sp),6(sp); unsigned char f(bf16_t a, bf16_t b)
-; returns in A, so a is at 1(sp),2(sp) and b at 3(sp),4(sp).
+; IX): bf16_t f(bf16_t a, bf16_t b) returns in IX (a two-byte result) and
+; unsigned char f(bf16_t a, bf16_t b) in A, so for both a is at 1(sp),2(sp)
+; and b at 3(sp),4(sp).
 
 	.area CODE (CODE)
 
 ; facc <- b, f0 <- a
 .macro	LOAD2
+	ldax	1(sp)
+	taf	0
+	ldax	2(sp)
+	taf	1
+	fswap	f0
 	ldax	3(sp)
 	taf	0
 	ldax	4(sp)
 	taf	1
-	fswap	f0
-	ldax	5(sp)
-	taf	0
-	ldax	6(sp)
-	taf	1
 .endm
 
-; return slot <- facc
+; IX <- facc: a two-byte result comes back in IX
 .macro	STORE
 	tfa	0
-	stax	1(sp)
+	tax
 	tfa	1
-	stax	2(sp)
+	taxu
 .endm
 
 	.globl _bf16_mul
@@ -142,23 +142,23 @@ _bf16_cmp:
 	ldi	#0x00
 	ret
 
-; bf16_t bf16_from_uint(unsigned int x): x at 3,4(sp)
+; bf16_t bf16_from_uint(unsigned int x): x at 1,2(sp)
 	.globl _bf16_from_uint
 _bf16_from_uint:
-	ldax	3(sp)
+	ldax	1(sp)
 	taf	0
-	ldax	4(sp)
+	ldax	2(sp)
 	taf	1
 	itof
 	STORE
 	ret
 
-; unsigned int bf16_to_uint(bf16_t a): a at 3,4(sp)
+; unsigned int bf16_to_uint(bf16_t a): a at 1,2(sp)
 	.globl _bf16_to_uint
 _bf16_to_uint:
-	ldax	3(sp)
+	ldax	1(sp)
 	taf	0
-	ldax	4(sp)
+	ldax	2(sp)
 	taf	1
 	ftoi
 	STORE

@@ -36,17 +36,17 @@
 ; low byte of L is 0 (no carry out of the low byte on an add), and the
 ; rounding reads one byte: up when SL > 0x80, or SL == 0x80 and SH odd.
 ;
-; Frame after ads #-8 (a leaf: RA is not saved):
+; Frame after ads #-10 (a leaf: RA is not saved):
 ;   1 LLO  2 LHI   the larger operand (1 = its sign, 0x00/0x80, later)
 ;   3 SLO  4 SHI   the smaller (3 = its shifted significand, later)
-;   5 SH   6 SL    the significand of the result    9,10  the return slot
+;   5 SH   6 SL    the significand of the result    9,10  the result (IX on return)
 ;   7 E    8 D     its exponent, d / the swap flag  11,12 a (low, high)  13,14 b
 
 	.area CODE (CODE)
 
 	.globl _bf16_add
 _bf16_add:
-	ads	#-8
+	ads	#-10
 	; the exponents (e = hi << 1 | lo >> 7) and the special cases
 	ldax	11(sp)
 	shl
@@ -267,14 +267,16 @@ pack:
 	if	c
 	adc.p	#0x7f		; the low bit of the exponent into bit 7
 	stax	9(sp)
-	ads	#8
+	ldxx	9(sp)			; the result comes back in IX
+	ads	#10
 	ret
 ret_L:
 	ldax	1(sp)
 	stax	9(sp)
 	ldax	2(sp)
 	stax	10(sp)
-	ads	#8
+	ldxx	9(sp)			; the result comes back in IX
+	ads	#10
 	ret
 ret_inf:
 	ldi	#0x80
@@ -283,20 +285,23 @@ ret_inf:
 	ldc	#0
 	adc	#0x7f
 	stax	10(sp)
-	ads	#8
+	ldxx	9(sp)			; the result comes back in IX
+	ads	#10
 	ret
 ret_szero:
 	ldax	1(sp)
 	stax	10(sp)
 	ldi	#0x00
 	stax	9(sp)
-	ads	#8
+	ldxx	9(sp)			; the result comes back in IX
+	ads	#10
 	ret
 ret_zero:
 	ldi	#0x00
 	stax	9(sp)
 	stax	10(sp)
-	ads	#8
+	ldxx	9(sp)			; the result comes back in IX
+	ads	#10
 	ret
 ret_b_or_nan:
 	; b is inf or nan: b, unless a is too - then a, or nan for inf - inf
@@ -314,7 +319,8 @@ ret_b_or_nan:
 	stax	9(sp)
 	ldi	#0x7f
 	stax	10(sp)
-	ads	#8
+	ldxx	9(sp)			; the result comes back in IX
+	ads	#10
 	ret
 a_zero:
 	ldax	8(sp)
@@ -327,19 +333,22 @@ a_zero:
 	stax	10(sp)
 	ldi	#0x00
 	stax	9(sp)
-	ads	#8
+	ldxx	9(sp)			; the result comes back in IX
+	ads	#10
 	ret
 ret_b:
 	ldax	13(sp)
 	stax	9(sp)
 	ldax	14(sp)
 	stax	10(sp)
-	ads	#8
+	ldxx	9(sp)			; the result comes back in IX
+	ads	#10
 	ret
 ret_a:
 	ldax	11(sp)
 	stax	9(sp)
 	ldax	12(sp)
 	stax	10(sp)
-	ads	#8
+	ldxx	9(sp)			; the result comes back in IX
+	ads	#10
 	ret

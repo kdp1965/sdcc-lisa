@@ -49,9 +49,12 @@ build/bin/sdcc -mlisa -o prog.ihx prog.c          # Intel HEX, byte addresses = 
 * `__sfr __at(0x210) UART_TX;` declares a peripheral register (direct
   addresses 0x200..0x3ff are the peripheral space).
 * The first parameter of a function travels in A when it is a byte; the
-  rest are on the stack, first parameter at the lowest address.  A function
-  whose inline asm reads its parameters from the stack is declared
-  `__sdcccall(0)` to keep them all there (variadic functions are).
+  rest are on the stack, first parameter at the lowest address.  A byte
+  result comes back in A, a two-byte one (int, a pointer) in IX, anything
+  wider or a struct in a slot the caller reserves above the return
+  address.  A function whose inline asm reads its parameters from the
+  stack or writes a return slot is declared `__sdcccall(0)` to keep the
+  old all-on-the-stack convention (variadic functions use it too).
 * `printf` needs `int putchar(int c)` from the application (see
   `device/lib/lisa` tests in the project scratch area for an example).
 * Default stack: SP starts at 0x7f (`--stack-loc`), i.e. the 128-byte RAM

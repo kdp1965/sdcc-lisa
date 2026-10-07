@@ -54,7 +54,8 @@ static struct genState
       int size;           /* local frame size (locals + spill slots) */
       int param_offset;   /* entry-SP-relative offset of the first parameter byte, minus sym->stack: 1 + return slot */
       int locals_base;    /* entry-SP-relative offset of the byte above the locals: -(saved RA, saved ISR registers) */
-      int ret_size;       /* size of the return slot (0 if the function returns <= 1 byte) */
+      int ret_size;       /* size of the return slot (0 if the function returns <= 1 byte, or in IX) */
+      bool ret_ix;        /* the result comes back in IX (lisaRetInIX) */
     } stack;
   bool ra_saved;          /* the prologue did sra */
   /* Track content of IX */
@@ -77,6 +78,7 @@ static struct genState
 G;
 
 static void adjustStack (int n);
+static void ixLoadValue (const asmop *aop);
 static unsigned char litByte (const asmop *aop, int offset);
 static bool loadA (const asmop *aop, int offset);
 
@@ -1401,7 +1403,8 @@ setupFrame (const iCode *ic)
 
   G.stack.pushed = 0;
   G.stack.size = sym->stack;
-  G.stack.ret_size = (retsize > 1 || IS_STRUCT (ftype->next)) ? retsize : 0;
+  G.stack.ret_ix = lisaRetInIX (ftype);
+  G.stack.ret_size = (retsize > 1 || IS_STRUCT (ftype->next)) && !G.stack.ret_ix ? retsize : 0;
   G.stack.param_offset = 1 + G.stack.ret_size;
   G.stack.locals_base = 0;
   G.ra_saved = false;
@@ -1544,12 +1547,21 @@ genReturn (const iCode *ic)
 
   D (emit2 ("; genReturn", ""));
 
-  if (left)
+  if (left && G.stack.ret_ix && IS_SYMOP (left) && lisaRetIXTemp (OP_SYMBOL (left)))
+    {
+      /* the call right before left it in IX */
+      D (emit2 (";", "the result stays in IX from the call"));
+    }
+  else if (left)
     {
       aopOp (left, ic);
       wassertl (currFunc, "return iCode outside of function");
 
-      if (!G.stack.ret_size)
+      if (G.stack.ret_ix)
+        {
+          ixLoadValue (left->aop);
+        }
+      else if (!G.stack.ret_size)
         {
           loadA (left->aop, 0);
         }
@@ -1737,7 +1749,8 @@ genCall (const iCode *ic)
   sym_link *ftype = IS_FUNCPTR (dtype) ? dtype->next : dtype;
   operand *left = IC_LEFT (ic);
   int retsize = getSize (ftype->next);
-  const bool bigreturn = (retsize > 1) || IS_STRUCT (ftype->next);
+  const bool ixreturn = lisaRetInIX (ftype);
+  const bool bigreturn = ((retsize > 1) || IS_STRUCT (ftype->next)) && !ixreturn;
   const bool SomethingReturned = (IS_ITEMP (IC_RESULT (ic)) &&
                        (OP_SYMBOL (IC_RESULT (ic))->nRegs || OP_SYMBOL (IC_RESULT (ic))->spildir || OP_SYMBOL (IC_RESULT (ic))->usl.spillLoc))
                        || IS_TRUE_SYMOP (IC_RESULT (ic));
@@ -1800,9 +1813,35 @@ genCall (const iCode *ic)
   freeAsmop (left);
 
   /* the return value */
+  if (ixreturn)
+    aInvalidate ();
   if (SomethingReturned)
     {
-      if (!bigreturn)
+      if (ixreturn)
+        {
+          /* the result in IX: stxx into its slot (IX then still holds
+             it, a deref right after needs no ldxx), or through A */
+          asmop *raop = IC_RESULT (ic)->aop;
+          if (raop->type == AOP_DUMMY)
+            ;
+          else if (raop->type == AOP_STK && !stkIsFar (raop, 0) && !stkIsFar (raop, 1))
+            {
+              emit2 ("stxx", "%s", stkArg (raop, 0));
+              cost (1, 2);
+              G.ix.type = AOP_STK;
+              G.ix.offset = raop->aopu.bytes[0].byteu.stk;
+            }
+          else
+            {
+              emit2 ("txa", "");
+              cost (1, 1);
+              storeA (raop, 0);
+              emit2 ("txau", "");
+              cost (1, 1);
+              storeA (raop, 1);
+            }
+        }
+      else if (!bigreturn)
         {
           if (IC_RESULT (ic)->aop->type != AOP_DUMMY)
             storeA (IC_RESULT (ic)->aop, 0);
@@ -3829,6 +3868,53 @@ ixLoadPtr (const asmop *aop)
       cost (2, 2);
       ixInvalidate ();
     }
+}
+
+/* {ix_cond, IX} <- a two-byte value (a result on its way out).  ldxx
+   from the stack; a literal with bit 15 set is an ldx (which sets
+   ix_cond); the rest through A, the high byte first and parked when its
+   load itself needs IX (code space, a far slot). */
+static void
+ixLoadValue (const asmop *aop)
+{
+  if (aop->type == AOP_STK && !stkIsFar (aop, 0) && !stkIsFar (aop, 1))
+    {
+      int stk = aop->aopu.bytes[0].byteu.stk;
+      if (G.ix.type == AOP_STK && G.ix.offset == stk)
+        return;
+      emit2 ("ldxx", "%s", stkArg (aop, 0));
+      cost (1, 2);
+      G.ix.type = AOP_STK;
+      G.ix.offset = stk;
+      return;
+    }
+  if (aop->type == AOP_LIT && (ulFromVal (aop->aopu.aop_lit) & 0x8000))
+    {
+      emit2 ("ldx", "#0x%04x", (unsigned) ulFromVal (aop->aopu.aop_lit) & 0x7fff);
+      cost (2, 2);
+      ixInvalidate ();
+      return;
+    }
+  bool via_ix = aop->type == AOP_CODE || aop->type == AOP_STK || (aop->type == AOP_DIR && aop->aopu.far);
+  ixInvalidate ();
+  if (via_ix)
+    {
+      loadA (aop, 1);
+      pushA ();
+      loadA (aop, 0);
+      emit2 ("tax", "");
+      cost (1, 1);
+      popA ();
+    }
+  else
+    {
+      loadA (aop, 0);
+      emit2 ("tax", "");
+      cost (1, 1);
+      loadA (aop, 1);
+    }
+  emit2 ("taxu", "");
+  cost (1, 1);
 }
 
 /* Would ixLoadPtr go through A (tax / taxu) for this pointer? */

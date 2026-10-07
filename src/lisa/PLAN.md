@@ -35,7 +35,10 @@ with the stack handling of the stm8/z80 ports.
 
 ## ABI
 
-* `char`/`bool` returned in `A`.  Anything wider is returned in a slot the caller
+* `char`/`bool` returned in `A`.  A two-byte result that is not a struct (int,
+  pointers, bf16) comes back in IX - `ldxx` / `stxx` move it in one word, a
+  pointer's tag riding along in `ix_cond` - unless the function is
+  `__sdcccall(0)`.  Anything wider, or a struct, is returned in a slot the caller
   reserves on the stack directly above the return address (`ads -size` just before
   `jal`), so the callee finds it at a static offset even with varargs.
 * Parameters are pushed right to left, little endian (high byte pushed first), so
@@ -405,12 +408,26 @@ and emits nothing.  The corpus: 33521 to 33263 words.  The copy runs
 that remain are mostly call results leaving the return slot (the slot's
 ABI, see the IX idea below).
 
+A two-byte result in IX (2026-10-07): `lisaRetInIX` (ralloc.c) - a
+two-byte result that is not a struct, unless the function is
+`__sdcccall(0)`.  genReturn loads IX (`ixLoadValue`: `ldxx` from the
+stack, `ldx` for a literal with bit 15 set, else through A with tax /
+taxu, the high byte parked on the stack when its own load needs IX);
+genCall stores it with `stxx` into the result's slot - and notes that
+IX still holds it, so a deref right after needs no `ldxx` - or through
+A for a global; `return f(x)` passes IX straight through
+(`lisaRetIXTemp`: the call's result, used by the RETURN right after it,
+gets no spill slot, no store, no load).  The library followed: divu.s
+reserves the old slot's pair itself (`ads #-2` before `sra`, so its
+bodies keep their frames) and ends with `ldxx 1(sp)`, bf16.s returns
+facc with tax / taxu, bf16add.s keeps its result pair in its own frame,
+setjmp.s hands 0 / the longjmp value over in IX, bf16fs.s takes the
+bf16 results from IX.  A leaf that computes its result pays an `ads
+#-2 .. ldxx 1(sp); ads #2` where the slot mapping used to be free (gw16
+5 to 8 words), every call site saves the 4 words of copying and its
+`ads`: the corpus 33263 to 32693 words.
+
 Not done / next:
-* A 16-bit result in IX instead of the return slot (`ldxx` / `stxx` move
-  16 bits in one word; the tag bit rides along): the scan's biggest
-  remaining copy source is call results copied out of the slot (~60% of
-  the stack-to-stack copy words), 4 words per call site plus the
-  caller's `ads`.
 * `__critical` is just eidi (no interrupt state to save: `ie` cannot be
   read).
 

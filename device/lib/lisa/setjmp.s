@@ -29,9 +29,9 @@
 ; jmp_buf is 4 bytes: [0..1] the SP at entry to setjmp, [2..3] the return
 ; address RA (high byte carries ra_cond).
 ;
-; Frame at entry to int __setjmp(jmp_buf buf), before any push:
-;   1(sp),2(sp)  return slot (int, low byte first)
-;   3(sp),4(sp)  buf
+; Frame at entry to int __setjmp(jmp_buf buf), before any push (the int
+; result comes back in IX):
+;   1(sp),2(sp)  buf
 ; Frame at entry to void longjmp(jmp_buf buf, int val):
 ;   1(sp),2(sp)  buf
 ;   3(sp),4(sp)  val
@@ -52,7 +52,7 @@ ___setjmp:
 	txau
 	push	a			; RA high + cond
 	xchg	ra			; RA restored
-	ldxx	7(sp)			; IX = buf (3(sp) + the 4 pushed bytes)
+	ldxx	5(sp)			; IX = buf (1(sp) + the 4 pushed bytes)
 	pop	a
 	stax	3(ix)			; RA high
 	pop	a
@@ -61,9 +61,9 @@ ___setjmp:
 	stax	1(ix)			; SP high
 	pop	a
 	stax	0(ix)			; SP low
-	ldi	#0x00			; return 0
-	stax	1(sp)
-	stax	2(sp)
+	ldi	#0x00			; return 0, in IX
+	tax
+	taxu
 	ret
 
 	.globl _longjmp
@@ -99,13 +99,14 @@ _longjmp:
 	tax
 	pop	a
 	taxu				; IX = buf
-	ldax	2(ix)
-	stax	1(sp)			; setjmp's return slot = val
 	ldax	3(ix)
-	stax	2(sp)
-	or	2(ix)
-	bnz	1$
-	ldi	#0x01			; longjmp(buf, 0) makes setjmp return 1
-	stax	1(sp)
-1$:
+	push	a			; val high
+	ldax	2(ix)
+	or	3(ix)			; Z: val == 0
+	ifte	z
+	ldi.p	#0x01			; longjmp(buf, 0) makes setjmp return 1
+	ldax.p	2(ix)
+	tax				; setjmp returns val, in IX
+	pop	a
+	taxu
 	ret

@@ -31,18 +31,22 @@
 ;
 ; The compiler emits the divider inline for unsigned operands up to 16
 ; bits; these are for the callers it cannot inline for, and for signed
-; operands.  unsigned int f(unsigned int a, unsigned int b): after sra
-; and the push of the flag byte the return slot is at 4(sp),5(sp), a at
-; 6(sp),7(sp), b at 8(sp),9(sp).  lddiv loads {RA[7:0], IX[7:0]} with the
-; dividend, div / rem take the divisor from {2(sp), A} and leave the
-; result's low byte in A and all 16 bits in RA (ra_cond set), which is
-; where the high byte is read from - 15 bits: a quotient by 1 has no
-; high byte there (the silicon leaves 0) and a remainder of 0x8000 or
-; more does not fit, so these check for those: on the TT07 silicon the
-; stage-two store of the high byte never lands, and a div / rem whose
-; second word has bit 1 clear (an offset of 0, 1, 4, 5 ...) writes the
-; low byte to that offset's address - hence the divisor's high byte
-; pushed twice, to sit at 2(sp).  RA is saved around all of it.
+; operands.  A two-byte result comes back in IX: each entry first
+; reserves a pair for it (ads #-2, before sra) where the caller's return
+; slot used to be, so that the bodies below keep their frames, and the
+; exit loads IX from the pair.  unsigned int f(unsigned int a, unsigned
+; int b): after the pair, sra and the push of the flag byte the result
+; pair is at 4(sp),5(sp), a at 6(sp),7(sp), b at 8(sp),9(sp).  lddiv
+; loads {RA[7:0], IX[7:0]} with the dividend, div / rem take the divisor
+; from {2(sp), A} and leave the result's low byte in A and all 16 bits
+; in RA (ra_cond set), which is where the high byte is read from - 15
+; bits: a quotient by 1 has no high byte there (the silicon leaves 0)
+; and a remainder of 0x8000 or more does not fit, so these check for
+; those: on the TT07 silicon the stage-two store of the high byte never
+; lands, and a div / rem whose second word has bit 1 clear (an offset of
+; 0, 1, 4, 5 ...) writes the low byte to that offset's address - hence
+; the divisor's high byte pushed twice, to sit at 2(sp).  RA is saved
+; around all of it.
 ;
 ; The signed entries make a and b non-negative in place, run the same
 ; code and negate the result once when the signs call for it (a
@@ -54,22 +58,26 @@
 	.globl __divuint, __moduint, __divsint, __modsint
 
 __divuint:
+	ads	#-2			; the result's pair
 	sra
 	ldi	#0x00
 	push	a			; 1(sp): bit 7 negate the result, bit 0 remainder
 	br	udiv16
 __moduint:
+	ads	#-2
 	sra
 	ldi	#0x01
 	push	a
 	br	umod16
 __divsint:
+	ads	#-2
 	sra
 	ldax	6(sp)			; the signs differ: a negative quotient
 	xor	8(sp)
 	andi	#0x80
 	br	sdiv16
 __modsint:
+	ads	#-2
 	sra
 	ldax	6(sp)			; the dividend's sign is the remainder's
 	andi	#0x80
@@ -97,14 +105,14 @@ udiv16:
 	lddiv	7(sp)
 	ldax	9(sp)			; b high
 	push	a
-	push	a			; 1(sp), 2(sp): b high; return slot 6,7; a 8,9; b 10,11
+	push	a			; 1(sp), 2(sp): b high; result pair 6,7; a 8,9; b 10,11
 	ldax	10(sp)
 	div	0, 2(sp)		; A = q low, RA = q
 	stax	6(sp)
 	xchg	ra
 	txau
 	andi	#0x7f			; q high - except that the silicon leaves 0 there for b == 1
-	push	a			; 1(sp); b high 3(sp); return slot 7,8; a 9,10; b 11,12
+	push	a			; 1(sp); b high 3(sp); result pair 7,8; a 9,10; b 11,12
 	ldax	11(sp)
 	cpi	#0x01
 	bnz	3$
@@ -123,7 +131,7 @@ umod16:
 	lddiv	7(sp)
 	ldax	9(sp)			; b high
 	push	a
-	push	a			; 1(sp), 2(sp): b high; return slot 6,7; a 8,9; b 10,11
+	push	a			; 1(sp), 2(sp): b high; result pair 6,7; a 8,9; b 10,11
 	ldax	10(sp)
 	rem	0, 2(sp)		; A = r low, RA = r
 	stax	6(sp)
@@ -143,7 +151,7 @@ umod16:
 	ldax	10(sp)
 	div	0, 2(sp)		; A = q
 	mul	2(sp)			; q * b high
-	push	a			; 1(sp); b high 2,3; return slot 7,8; a 9,10; b 11,12
+	push	a			; 1(sp); b high 2,3; result pair 7,8; a 9,10; b 11,12
 	ldax	7(sp)			; r low
 	cpi	#0x01			; C = (r low == 0): cmp would report a borrow against 0
 	ldax	9(sp)			; a low
@@ -163,6 +171,8 @@ done16:
 	jal	neg2			; the result negated in place
 5$:	ads	#1
 	lra
+	ldxx	1(sp)			; the result, in IX
+	ads	#2
 	ret
 
 ; ---- bytes ---------------------------------------------------------------
@@ -175,16 +185,18 @@ done16:
 ; most 255, or its 16-bit negation when the signs say so.  The unsigned
 ; pair is here for the shape the compiler cannot inline (a _BitInt).
 ; a comes in A (the first byte parameter, lisa_reg_parm), b on the
-; stack.  Frame after sra, the push of a and the flag push: 1(sp) the
-; flag - bit 7 negate the result, bit 0 remainder; a 2(sp); RA 3,4; the
-; return slot 5,6; b 7(sp).
+; stack, the int result goes back in IX.  Frame after the result's
+; pair (ads #-2), sra, the push of a and the flag push: 1(sp) the flag
+; - bit 7 negate the result, bit 0 remainder; a 2(sp); RA 3,4; the
+; result pair 5,6; b 7(sp).
 
 	.globl __divschar, __modschar, __divuchar, __moduchar
 	.globl __divsuchar, __modsuchar, __divuschar, __moduschar
 
 __divschar:
+	ads	#-2			; the result's pair
 	sra
-	push	a			; a 1(sp); RA 2,3; slot 4,5; b 6(sp)
+	push	a			; a 1(sp); RA 2,3; pair 4,5; b 6(sp)
 	xor	6(sp)			; the signs differ: a negative quotient
 	andi	#0x80
 	push	a
@@ -192,6 +204,7 @@ __divschar:
 	jal	absb
 	br	div8
 __modschar:
+	ads	#-2
 	sra
 	push	a
 	andi	#0x80			; the dividend's sign is the remainder's
@@ -202,6 +215,7 @@ __modschar:
 	jal	absb
 	br	div8
 __divuschar:				; a signed, b unsigned
+	ads	#-2
 	sra
 	push	a
 	andi	#0x80
@@ -209,6 +223,7 @@ __divuschar:				; a signed, b unsigned
 	jal	absa
 	br	div8
 __moduschar:
+	ads	#-2
 	sra
 	push	a
 	andi	#0x80
@@ -218,6 +233,7 @@ __moduschar:
 	jal	absa
 	br	div8
 __divsuchar:				; a unsigned, b signed
+	ads	#-2
 	sra
 	push	a
 	ldax	6(sp)
@@ -226,6 +242,7 @@ __divsuchar:				; a unsigned, b signed
 	jal	absb
 	br	div8
 __modsuchar:				; a non-negative dividend: a non-negative remainder
+	ads	#-2
 	sra
 	push	a
 	ldi	#0x01
@@ -233,12 +250,14 @@ __modsuchar:				; a non-negative dividend: a non-negative remainder
 	jal	absb
 	br	div8
 __divuchar:
+	ads	#-2
 	sra
 	push	a
 	ldi	#0x00
 	push	a
 	br	div8
 __moduchar:
+	ads	#-2
 	sra
 	push	a
 	ldi	#0x01
@@ -265,6 +284,8 @@ div8:
 	jal	neg2			; negated as 16 bits
 3$:	ads	#2
 	lra
+	ldxx	1(sp)			; the result, in IX
+	ads	#2
 	ret
 
 ; a = |a|, b = |b| (the frame above; a jal moves no stack)
