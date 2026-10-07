@@ -1002,6 +1002,13 @@ parse()
                                                 }
                                                 return(0);
                                         }
+                                        if (TARGET_IS_LISA) {
+                                                /* sdcc --stack-size: the data limit came as -X */
+                                                unget(getnb());
+                                                if (ip && *ip)
+                                                        stacksize = expr(0);
+                                                return(0);
+                                        }
                                         // else fall through
                                 case 's':
                                         oflag = 2;

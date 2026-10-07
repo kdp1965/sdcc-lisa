@@ -259,12 +259,26 @@ lisa_reg_parm (sym_link *l, bool reentrant)
    __SDCC_BF16_FLOAT is defined for the source. */
 #define OPTION_BF16_FLOAT "--bf16-float"
 
+/* --tt07-cache: the data space is the 32K SRAM behind the TT07 data cache,
+   which folds bit 14 of the address (lisa_isa.md, data_cache8.v): X and
+   X ^ 0x4000 share storage, so 16K is usable.  The stack goes to the top
+   of the upper half (--stack-loc 0x7fff unless given), with --stack-size
+   bytes (2K unless given) reserved, and the data areas must end below
+   the stack's alias in the lower half: the linker gets that limit as the
+   data RAM size (-X) and refuses a layout beyond it. */
+#define OPTION_TT07_CACHE "--tt07-cache"
+
+#define OPTION_STACK_SIZE "--stack-size"
+
 static OPTION lisa_options[] = {
   {0, OPTION_BF16_FLOAT, NULL, "float arithmetic on the bfloat16 unit (8-bit mantissa, see README-lisa.md)"},
+  {0, OPTION_TT07_CACHE, NULL, "data in the 32K SRAM behind the TT07 data cache: stack at 0x7fff, data limited to 16K minus --stack-size"},
+  {0, OPTION_STACK_SIZE, NULL, "<nnnn> bytes reserved for the stack (--tt07-cache: 2K unless given)"},
   {0, NULL}
 };
 
 static bool lisa_bf16_float = false;
+static bool lisa_tt07_cache = false;
 
 static bool
 lisa_parseOptions (int *pargc, char **argv, int *i)
@@ -272,6 +286,23 @@ lisa_parseOptions (int *pargc, char **argv, int *i)
   if (!strcmp (argv[*i], OPTION_BF16_FLOAT))
     {
       lisa_bf16_float = true;
+      return TRUE;
+    }
+  if (!strcmp (argv[*i], OPTION_TT07_CACHE))
+    {
+      lisa_tt07_cache = true;
+      return TRUE;
+    }
+  if (!strncmp (argv[*i], OPTION_STACK_SIZE, strlen (OPTION_STACK_SIZE)))
+    {
+      const char *v = argv[*i] + strlen (OPTION_STACK_SIZE);
+      if (*v == '=')
+        v++;
+      else if (!*v && *i + 1 < *pargc)
+        v = argv[++*i];
+      else
+        return FALSE;
+      options.stack_size = (int) strtol (v, NULL, 0);
       return TRUE;
     }
   return FALSE;
@@ -282,6 +313,27 @@ lisa_finaliseOptions (void)
 {
   port->mem.default_local_map = data;
   port->mem.default_globl_map = data;
+  if (lisa_tt07_cache)
+    {
+      if (options.stack_loc < 0)
+        options.stack_loc = 0x7fff;
+      if (!options.stack_size)
+        options.stack_size = 0x800;
+      if (!options.xram_size_set)
+        {
+          /* the stack's alias in the lower half is where the data must stop */
+          int limit = (options.stack_loc & 0x3fff) - options.stack_size + 1;
+          if (limit > 0x4000)
+            limit = 0x4000;
+          if (limit <= 0)
+            {
+              fprintf (stderr, "--tt07-cache: the stack reserve 0x%x does not fit below the stack at 0x%x\n", options.stack_size, options.stack_loc);
+              exit (EXIT_FAILURE);
+            }
+          options.xram_size = limit;
+          options.xram_size_set = 1;
+        }
+    }
   if (lisa_bf16_float)
     {
       addSet (&preArgvSet, Safe_strdup ("-D__SDCC_BF16_FLOAT"));

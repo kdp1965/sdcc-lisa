@@ -120,8 +120,14 @@ build/bin/sdcc -mlisa -o prog.ihx prog.c          # Intel HEX, byte addresses = 
   `inx`/`dcx` (a read-modify-write that misses the cache works on stale
   data).  The cache's own bug - data addresses X and X ^ 0x4000 share a
   RAM location - means a program must not use both halves of the data
-  space at addresses that differ only in bit 14; `--stack-loc 0x7fff`
-  with the globals below 0x4000 is fine.
+  space at addresses that differ only in bit 14.  `--tt07-cache` lays
+  a program out for it: the stack at 0x7fff (upper half, cache lines
+  4..7, so it never evicts data), `--stack-size` bytes reserved (2K
+  unless given), and the data areas - DATA, INITIALIZED, FDATA with the
+  1K heap, FINITIALIZED - limited to 16K minus that reserve (the limit
+  reaches the linker as `-X`, and `sdldlisa` refuses a layout beyond
+  it).  Splitting data across the halves gains nothing: whatever is
+  used in one half is unusable in the other.
 * Code size: `gen.c` tracks what A holds and skips reloads, compares
   against 0 are sign-bit tests or `bnz` chains, and the peephole rules
   (`src/lisa/peeph.def`) thread branches and drop dead code; `--no-peep`

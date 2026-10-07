@@ -528,6 +528,26 @@ lnkarea(void)
                 }
                 ap = ap->a_ap;
         }
+
+        /* sdld lisa: -X gives the end of the data RAM the data areas may
+           use (sdcc --tt07-cache: the stack's alias through the TT07
+           cache's folded bit 14, or --xram-size); refuse anything beyond */
+        if (TARGET_IS_LISA && xram_size > 0 && xram_size < 0x10000) {
+                int bad = 0;
+                for (ap = areap; ap; ap = ap->a_ap) {
+                        if ((ap->a_flag & A_CODE) || ap->a_size == 0)
+                                continue;
+                        if (ap->a_addr + ap->a_size > (a_uint) xram_size) {
+                                fprintf(stderr, "?ASlink-Error-Data area %s ends at 0x%04lX, beyond the data RAM limit 0x%04lX\n",
+                                        ap->a_id, (long) (ap->a_addr + ap->a_size), (long) xram_size);
+                                bad = 1;
+                        }
+                }
+                if (bad) {
+                        fprintf(stderr, "?ASlink-Error-(the TT07 data cache folds address bit 14: data must stay below the stack's alias; see sdcc --tt07-cache, --stack-size)\n");
+                        lkexit(ER_ERROR);
+                }
+        }
 }
 
 /* sdld specific */

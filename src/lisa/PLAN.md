@@ -288,8 +288,10 @@ cache, so `genAddSub`'s inx/dcx, the shift loops' dcx, the startup
 copy loops (`lisa_genInitStartup`) and divul.s / bf16add.s touch each
 byte's line with a `cmp` first.  And the cache maps bit 14 of the data
 address to nothing (data_cache8.v uses cache_map[1] for qspi_addr[14]),
-so X and X ^ 0x4000 alias; programs keep their data below 0x4000 and
-the stack above.  lisa_isa.md has the three notes.
+so X and X ^ 0x4000 alias; `--tt07-cache` (main.c) puts the stack at
+0x7fff with `--stack-size` (2K default) reserved and hands the linker
+the data limit 0x4000 - reserve as -X, which lkarea.c enforces for
+LISA (lkmain.c consumes -S).  lisa_isa.md has the three notes.
 
 Not done / next:
 * Code quality: the pointer-write side (`stax k(ix)` already) and
