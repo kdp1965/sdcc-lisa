@@ -6,11 +6,21 @@ abs_top_builddir = @abs_top_builddir@
 # sdar (sdbinutils) may be unavailable: use the plain list-of-objects library format
 LIB_TYPE     = LIST
 
-EXTRA_CFLAGS = -mlisa
+# This Makefile.in builds two libraries: configure writes it as
+# device/lib/lisa/Makefile (lisa.lib for the direct RAM) and as
+# device/lib/lisa-cache/Makefile (the same compiled with --tt07-cache,
+# which the compiler links for --tt07-cache programs: get_model); the
+# directory name tells which.  The sources are all in device/lib/lisa.
+MODEL = $(notdir $(CURDIR))
+LISASRC = $(srcdir)/../lisa
+vpath %.s $(LISASRC)
+vpath %.c $(LISASRC)
+
+EXTRA_CFLAGS = -mlisa $(if $(filter lisa-cache,$(MODEL)),--tt07-cache)
 
 SAS = $(top_builddir)/bin/sdaslisa
 
-override PORTDIR = ../build/lisa
+override PORTDIR = ../build/$(MODEL)
 
 include $(srcdir)/../incl.mk
 
@@ -118,9 +128,9 @@ endif
 
 %.rel: %.s
 	@# TODO: sdas should place it\'s output in the current dir
-	test $(srcdir) = . || cp $< .
+	test "`cd $(dir $<) && pwd`" = "`pwd`" || cp $< .
 	-$(AS) $(ASFLAGS) $(notdir $<)
-	test $(srcdir) = . || rm $(notdir $<)
+	test "`cd $(dir $<) && pwd`" = "`pwd`" || rm $(notdir $<)
 
 clean:
 	rm -f *.rel *.sym *.lst *~ $(CLEANSPEC) *.dump* *.asm *.lib
@@ -128,5 +138,5 @@ clean:
 distclean: clean
 	rm -f Makefile
 
-Makefile: $(srcdir)/Makefile.in
-	cd $(top_builddir); ./config.status device/lib/lisa/Makefile
+Makefile: $(LISASRC)/Makefile.in
+	cd $(top_builddir); ./config.status device/lib/$(MODEL)/Makefile

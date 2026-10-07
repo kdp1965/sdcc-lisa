@@ -442,6 +442,20 @@ TT07 predication only pays where it removes words (an if/else join
 folded into `ifte`, ~20 sites in the scan); the generator keeps the
 branches.
 
+The read-modify-write workaround only under --tt07-cache (2026-10-07):
+the `cmp` of each byte before an `inx` / `dcx` (genAddSub, the shift
+loops, the startup copy loops) is for a data-cache miss; a program for
+the direct 128-byte RAM has no cache, so `lisa_tt07_cache` now gates
+it.  The library comes in two: `lib/lisa` and `lib/lisa-cache`, the
+latter compiled with `--tt07-cache` - the one Makefile.in, written by
+configure into `device/lib/lisa/Makefile` and
+`device/lib/lisa-cache/Makefile` (the directory name sets PORTDIR and
+the flag; `device/lib/lisa-cache` exists in the source tree for the
+`../lisa` sources to be found) - and `get_model` returns `lisa-cache`
+under the option, which is where SDCC takes the library directory from.
+The hand-written .s keep their `cmp`s in both (a few words).  The corpus
+32693 to 32092 words.
+
 Not done / next:
 * `__critical` is just eidi (no interrupt state to save: `ie` cannot be
   read).

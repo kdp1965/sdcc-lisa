@@ -524,6 +524,7 @@ model-pdk15:
 model-lisa:
 	if grep '^lisa$$' $(top_builddir)/ports.build > /dev/null; then \
 	  $(MAKE) MODELFLAGS="-mlisa" PORT=lisa objects-lisa || exit 1; \
+	  $(MAKE) MODELFLAGS="-mlisa --tt07-cache" PORT=lisa-cache objects-lisa || exit 1; \
 	fi
 
 objects-lisa:

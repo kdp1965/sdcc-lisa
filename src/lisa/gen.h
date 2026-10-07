@@ -83,6 +83,7 @@ typedef struct asmop
 asmop;
 
 void genLisaCode (iCode *);
+extern bool lisa_tt07_cache;    /* --tt07-cache: the data behind the TT07 cache (main.c) */
 float dryLisaiCode (iCode *ic);
 void lisaDryRunInit (iCode *ic);
 bool lisaNotUsed (const char *what, lineNode *endPl, lineNode *head);

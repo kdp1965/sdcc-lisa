@@ -134,8 +134,11 @@ lisa_genInitStartup (FILE *of)
   fprintf (of, "\tldi\t#0\n");
   fprintf (of, "\tstax\t0(ix)\n");
   fprintf (of, "\tadx\t#1\n");
-  fprintf (of, "\tcmp\t2(sp)\n");          /* TT07: the count's lines into the cache before the dcx */
-  fprintf (of, "\tcmp\t1(sp)\n");
+  if (lisa_tt07_cache)
+    {
+      fprintf (of, "\tcmp\t2(sp)\n");      /* TT07: the count's lines into the cache before the dcx */
+      fprintf (of, "\tcmp\t1(sp)\n");
+    }
   fprintf (of, "\tdcx\t1(sp)\n");
   fprintf (of, "\tif\tc\n");
   fprintf (of, "\tdcx\t2(sp)\n");
@@ -155,8 +158,11 @@ lisa_genInitStartup (FILE *of)
   fprintf (of, "\tldi\t#0\n");
   fprintf (of, "\tstax\t0(ix)\n");
   fprintf (of, "\tadx\t#1\n");
-  fprintf (of, "\tcmp\t2(sp)\n");          /* TT07: the count's lines into the cache before the dcx */
-  fprintf (of, "\tcmp\t1(sp)\n");
+  if (lisa_tt07_cache)
+    {
+      fprintf (of, "\tcmp\t2(sp)\n");      /* TT07: the count's lines into the cache before the dcx */
+      fprintf (of, "\tcmp\t1(sp)\n");
+    }
   fprintf (of, "\tdcx\t1(sp)\n");
   fprintf (of, "\tif\tc\n");
   fprintf (of, "\tdcx\t2(sp)\n");
@@ -183,14 +189,20 @@ lisa_genInitStartup (FILE *of)
   fprintf (of, "\tpush\tix\n");
   fprintf (of, "\tldxx\t3(sp)\n");
   fprintf (of, "\tstax\t0(ix)\n");
-  fprintf (of, "\tcmp\t4(sp)\n");          /* TT07: the pointer's lines into the cache before the inx */
-  fprintf (of, "\tcmp\t3(sp)\n");
+  if (lisa_tt07_cache)
+    {
+      fprintf (of, "\tcmp\t4(sp)\n");      /* TT07: the pointer's lines into the cache before the inx */
+      fprintf (of, "\tcmp\t3(sp)\n");
+    }
   fprintf (of, "\tinx\t3(sp)\n");
   fprintf (of, "\tif\tc\n");
   fprintf (of, "\tinx\t4(sp)\n");
   fprintf (of, "\tpop\tix\n");
-  fprintf (of, "\tcmp\t4(sp)\n");
-  fprintf (of, "\tcmp\t3(sp)\n");
+  if (lisa_tt07_cache)
+    {
+      fprintf (of, "\tcmp\t4(sp)\n");
+      fprintf (of, "\tcmp\t3(sp)\n");
+    }
   fprintf (of, "\tdcx\t3(sp)\n");
   fprintf (of, "\tif\tc\n");
   fprintf (of, "\tdcx\t4(sp)\n");
@@ -216,14 +228,20 @@ lisa_genInitStartup (FILE *of)
   fprintf (of, "\tpush\tix\n");
   fprintf (of, "\tldxx\t3(sp)\n");
   fprintf (of, "\tstax\t0(ix)\n");
-  fprintf (of, "\tcmp\t4(sp)\n");          /* TT07: the pointer's lines into the cache before the inx */
-  fprintf (of, "\tcmp\t3(sp)\n");
+  if (lisa_tt07_cache)
+    {
+      fprintf (of, "\tcmp\t4(sp)\n");      /* TT07: the pointer's lines into the cache before the inx */
+      fprintf (of, "\tcmp\t3(sp)\n");
+    }
   fprintf (of, "\tinx\t3(sp)\n");
   fprintf (of, "\tif\tc\n");
   fprintf (of, "\tinx\t4(sp)\n");
   fprintf (of, "\tpop\tix\n");
-  fprintf (of, "\tcmp\t4(sp)\n");
-  fprintf (of, "\tcmp\t3(sp)\n");
+  if (lisa_tt07_cache)
+    {
+      fprintf (of, "\tcmp\t4(sp)\n");
+      fprintf (of, "\tcmp\t3(sp)\n");
+    }
   fprintf (of, "\tdcx\t3(sp)\n");
   fprintf (of, "\tif\tc\n");
   fprintf (of, "\tdcx\t4(sp)\n");
@@ -297,7 +315,7 @@ static OPTION lisa_options[] = {
 };
 
 static bool lisa_bf16_float = false;
-static bool lisa_tt07_cache = false;
+bool lisa_tt07_cache = false;
 
 static bool
 lisa_parseOptions (int *pargc, char **argv, int *i)
@@ -483,10 +501,13 @@ hasExtBitOp (int op, sym_link *left, int right)
   return (false);
 }
 
+/* The library directory: lib/lisa-cache holds the library compiled with
+   --tt07-cache (the read-modify-write workaround in its C), lib/lisa the
+   one for the direct RAM. */
 static const char *
 get_model (void)
 {
-  return "lisa";
+  return lisa_tt07_cache ? "lisa-cache" : "lisa";
 }
 
 /** $1 is always the basename.

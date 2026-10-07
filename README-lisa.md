@@ -31,13 +31,17 @@ mkdir -p support/sdbinutils/libiberty && (cd support/sdbinutils/libiberty && \
     ../../../../support/sdbinutils/libiberty/configure && make)
 sed -i '' 's|^#define HAVE_PIPE2 1|/* #undef HAVE_PIPE2 */|' support/sdbinutils/libiberty/config.h
 make                                # serial: the gcc-based sdcpp configure races under -j
-# make the uninstalled compiler find its library and headers
+# make the uninstalled compiler find its libraries and headers (lisa-cache is
+# the library compiled with --tt07-cache, which --tt07-cache programs link)
 mkdir -p share/sdcc/lib && ln -sfn ../../../device/lib/build/lisa share/sdcc/lib/lisa
+ln -sfn ../../../device/lib/build/lisa-cache share/sdcc/lib/lisa-cache
 ln -sfn $PWD/../device/include share/sdcc/include
 ```
 
 Incremental rebuilds: `make -C src`, `make -C sdas/aslisa`,
-`make -C sdas/linksrc sdcc-ldlisa`, `make -C device/lib/lisa`.
+`make -C sdas/linksrc sdcc-ldlisa`, `make -C device/lib/lisa` and
+`make -C device/lib/lisa-cache` (the two libraries: after a compiler
+change, `make clean` in both first).
 
 ## Using it
 

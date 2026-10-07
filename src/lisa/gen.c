@@ -2050,11 +2050,12 @@ genAddSub (const iCode *ic, bool sub)
       (aopIsLitVal (raop, 0, size, 1)))
     {
       const char *op = sub ? "dcx" : "inx";
-      for (int i = size - 1; i >= 0; i--)
-        {
-          emit2 ("cmp", "%s", memArg (laop, i));
-          cost (1, 1);
-        }
+      if (lisa_tt07_cache)
+        for (int i = size - 1; i >= 0; i--)
+          {
+            emit2 ("cmp", "%s", memArg (laop, i));
+            cost (1, 1);
+          }
       emit2 (op, "%s", memArg (laop, 0));
       cost (1, 2);
       for (int i = 1; i < size; i++)
@@ -3304,8 +3305,11 @@ genShift (const iCode *ic, bool left_shift)
           }
         pushA ();
         loadA (left->aop, 0);
-        emit2 ("cmp", "2(sp)");         /* the count's line into the cache before the dcx (TT07) */
-        cost (1, 1);
+        if (lisa_tt07_cache)
+          {
+            emit2 ("cmp", "2(sp)");     /* the count's line into the cache before the dcx (TT07) */
+            cost (1, 1);
+          }
         emitLbl (tlbl);
         emit2 ("dcx", "2(sp)");
         emit2 ("if", "c");
