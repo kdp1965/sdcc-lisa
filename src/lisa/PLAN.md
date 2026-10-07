@@ -427,6 +427,21 @@ bf16 results from IX.  A leaf that computes its result pays an `ads
 5 to 8 words), every call site saves the 4 words of copying and its
 `ads`: the corpus 33263 to 32693 words.
 
+Predicated compare chains, measured and not adopted (2026-10-07): the
+scan's commonest short branch is the second byte of a multi-byte
+equality compare (`bnz L; ldax hi; cmp/cpi; L:`, ~240 sites), and
+`iftt z` fits it exactly - same size, no taken branch.  Timed on the
+chip with TIMER1 (1 ms steps, `LISA_NO_IFTT` for the A/B): a 16-bit
+`while (i != n) i++` 3000 times, 143 ms with the branch, 144 predicated;
+a 32-bit one 1200 times, 76 ms with the branches, 115 predicated.  The
+4-word instruction cache explains it: a short forward branch whose
+target lies in the current line costs nothing, while a predicated chain
+streams every one of its words through the cache - 12 words for the long
+compare, three line fetches where the branch form takes two.  So on the
+TT07 predication only pays where it removes words (an if/else join
+folded into `ifte`, ~20 sites in the scan); the generator keeps the
+branches.
+
 Not done / next:
 * `__critical` is just eidi (no interrupt state to save: `ie` cannot be
   read).
