@@ -109,7 +109,10 @@ copyHome (symbol *sym)
       if (!dic || d->seq < dic->seq)
         dic = d;
     }
-  if (dic->op != '=' || POINTER_SET (dic) || !IS_SYMOP (IC_RESULT (dic)) || OP_SYMBOL (IC_RESULT (dic)) != sym)
+  /* an assignment, or a cast between types of one size (genCast: a plain move) */
+  bool copy = dic->op == '=' && !POINTER_SET (dic) ||
+              dic->op == CAST && !IS_BOOLEAN (operandType (IC_RESULT (dic))) && !IS_BITINT (operandType (IC_RESULT (dic)));
+  if (!copy || !IS_SYMOP (IC_RESULT (dic)) || OP_SYMBOL (IC_RESULT (dic)) != sym)
     return NULL;
   if (!IS_SYMOP (IC_RIGHT (dic)) || IS_OP_VOLATILE (IC_RIGHT (dic)))
     return NULL;
@@ -129,8 +132,13 @@ copyHome (symbol *sym)
     fprintf (stderr, "copy %s := %s: parm %d onStack %d vol %d addr %d reg %p size %d uses %d defs %d depth %d\n",
              sym->name, src->name, src->_isparm, src->onStack, IS_VOLATILE (src->etype), src->addrtaken, (void *) src->regs[0],
              getSize (src->type), bitVectnBitsOn (src->uses), bitVectnBitsOn (src->defs), loopDepthOf (dic));
-  if (!src->_isparm || !src->onStack || IS_VOLATILE (src->etype) || src->addrtaken || src->regs[0] ||
-      bitVectnBitsOn (src->uses) != 1 || bitVectnBitsOn (src->defs) != 0 || loopDepthOf (dic) != 0)
+  if (!src->_isparm || !src->onStack || IS_VOLATILE (src->etype) || src->addrtaken || src->regs[0] || bitVectnBitsOn (src->defs) != 0)
+    return NULL;
+  /* a temporary never written after the copy stays equal to the parameter
+     (never written either): the two can share whatever else reads the
+     parameter, wherever the copy sits; one that is written needs the
+     parameter dead - read by this copy alone, outside any loop */
+  if (bitVectnBitsOn (sym->defs) != 1 && (bitVectnBitsOn (src->uses) != 1 || loopDepthOf (dic) != 0))
     return NULL;
   /* the parameter's slot is the temporary's from the copy on: nothing
      may have written it before (a definition of the temporary earlier

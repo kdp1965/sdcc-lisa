@@ -382,23 +382,28 @@ corpus (15 programs with the library) 34214 to 33521 words, -2.0%.
 Peephole 28 merges adjacent `ads` (`ads` takes a 10-bit immediate:
 `S_SIMM10` in sdaslisa, the ISA doc said 8).
 
-Copies share a slot (2026-10-07): a temporary born as a copy of
-something that dies at the copy takes that thing's place
-(`copyHome`, ralloc.c, from `createStackSpil`): of a spilled temporary,
+Copies share a slot (2026-10-07): a temporary born as a copy (an
+assignment, or a cast between types of one size - genCast is a plain
+move then) takes the place of what it copies (`copyHome`, ralloc.c,
+from `createStackSpil`): of a spilled temporary that dies at the copy,
 its spill location, when the clash sets allow (SDCC does not count live
 ranges that only touch at the copy as a clash - SDCClrange.c); of a
-parameter that nothing but the copy reads and nothing writes, when the
-copy is outside any loop and is the temporary's first definition in
-sequence, the parameter's own slot (the temporaries homed in a
-parameter are tracked like a spill location's; other locals are left
-alone because redoStackOffsets lets disjoint blocks share their space).
-That second case is what SDCC's loop passes leave: the parameters a loop
-modifies, copied into temporaries first - `zero2(p, n)` in the scan
-had a 3-byte frame and a 6-word prologue for it, now neither (`inx 4(sp)`
-on the parameter itself).  cheapMove finds the same slot on both sides
-of the copy and emits nothing.  The corpus: 33521 to 33274 words.  The
-copy runs that remain are mostly call results leaving the return slot
-(the slot's ABI, see the IX idea below).
+never-written parameter, the parameter's own slot - unconditionally
+when the temporary is never written after the copy either (the two stay
+equal, whatever else reads the parameter), and when it is written (a
+loop variable: the copy is its first definition in sequence, the
+increments follow), only if nothing but the copy reads the parameter
+and the copy is outside any loop.  The temporaries homed in a parameter
+are tracked like a spill location's; other locals are left alone
+because redoStackOffsets lets disjoint blocks share their space.  The
+loop-variable case is what SDCC's loop passes leave: the parameters a
+loop modifies, copied into temporaries first - `zero2(p, n)` in the
+scan had a 3-byte frame and a 6-word prologue for it, now neither (`inx
+4(sp)` on the parameter itself); `__memcpy`'s prologue went from five
+copies to one.  cheapMove finds the same slot on both sides of the copy
+and emits nothing.  The corpus: 33521 to 33263 words.  The copy runs
+that remain are mostly call results leaving the return slot (the slot's
+ABI, see the IX idea below).
 
 Not done / next:
 * A 16-bit result in IX instead of the return slot (`ldxx` / `stxx` move
