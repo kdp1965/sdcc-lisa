@@ -43,6 +43,103 @@ noOverLap (set *itmpStack, symbol *fsym)
   return 1;
 }
 
+/* Copies.  A temporary born as a copy of something that dies at the copy
+   takes that thing's place, and the copy becomes nothing (cheapMove finds
+   the same slot on both sides):
+   - of a spilled temporary: its spill location, when the clashes allow
+     (SDCC does not count live ranges that only touch at the copy as a
+     clash);
+   - of a parameter that nothing but this copy reads and nothing writes,
+     when the copy is outside any loop (SDCC's loop passes copy the
+     parameters a loop modifies into temporaries first): the parameter's
+     own slot, which the temporaries homed there share like a spill
+     location.
+   Parameters only, not other locals: redoStackOffsets lets the locals of
+   disjoint blocks share stack space, which a temporary living on past
+   its block would break. */
+typedef struct
+{
+  symbol *home;                 /* a parameter hosting temporaries */
+  set *temps;
+} lisaHome;
+
+static set *lisaHomes = NULL;
+static eBBlock **lisaEbbs;
+static int lisaEbbCount;
+
+static lisaHome *
+homeFor (symbol *s, bool create)
+{
+  lisaHome *h;
+  for (h = setFirstItem (lisaHomes); h; h = setNextItem (lisaHomes))
+    if (h->home == s)
+      return h;
+  if (!create)
+    return NULL;
+  h = Safe_calloc (1, sizeof (lisaHome));
+  h->home = s;
+  addSetHead (&lisaHomes, h);
+  return h;
+}
+
+static int
+loopDepthOf (const iCode *ic)
+{
+  for (int i = 0; i < lisaEbbCount; i++)
+    if (ic->seq >= lisaEbbs[i]->fSeq && ic->seq <= lisaEbbs[i]->lSeq)
+      return lisaEbbs[i]->depth;
+  return 1;
+}
+
+/* the place sym can share, or NULL */
+static symbol *
+copyHome (symbol *sym)
+{
+  if (!sym->isitmp || sym->remat || !bitVectnBitsOn (sym->defs))
+    return NULL;
+  /* the copy among the definitions (a loop variable is also redefined
+     by its increments): the first in sequence, before every other */
+  iCode *dic = NULL;
+  bitVect *defs = bitVectCopy (sym->defs);
+  for (int bit = bitVectFirstBit (defs); bitVectnBitsOn (defs); bitVectUnSetBit (defs, bit), bit = bitVectFirstBit (defs))
+    {
+      iCode *d = hTabItemWithKey (iCodehTab, bit);
+      if (!d)
+        return NULL;
+      if (!dic || d->seq < dic->seq)
+        dic = d;
+    }
+  if (dic->op != '=' || POINTER_SET (dic) || !IS_SYMOP (IC_RESULT (dic)) || OP_SYMBOL (IC_RESULT (dic)) != sym)
+    return NULL;
+  if (!IS_SYMOP (IC_RIGHT (dic)) || IS_OP_VOLATILE (IC_RIGHT (dic)))
+    return NULL;
+  symbol *src = OP_SYMBOL (IC_RIGHT (dic));
+  if (getSize (src->type) != getSize (sym->type) || IS_BITVAR (src->etype) || IS_BITVAR (sym->etype))
+    return NULL;
+  if (src->isitmp)
+    {
+      if (src->remat || !src->usl.spillLoc || src->liveTo > dic->seq)
+        return NULL;
+      symbol *home = src->usl.spillLoc;
+      lisaHome *h = isinSet (lisaSlocs, home) ? NULL : homeFor (home, false);
+      set *temps = isinSet (lisaSlocs, home) ? home->usl.itmpStack : h ? h->temps : NULL;
+      return noOverLap (temps, sym) ? home : NULL;
+    }
+  if (getenv ("LISA_DEBUG_COPY"))
+    fprintf (stderr, "copy %s := %s: parm %d onStack %d vol %d addr %d reg %p size %d uses %d defs %d depth %d\n",
+             sym->name, src->name, src->_isparm, src->onStack, IS_VOLATILE (src->etype), src->addrtaken, (void *) src->regs[0],
+             getSize (src->type), bitVectnBitsOn (src->uses), bitVectnBitsOn (src->defs), loopDepthOf (dic));
+  if (!src->_isparm || !src->onStack || IS_VOLATILE (src->etype) || src->addrtaken || src->regs[0] ||
+      bitVectnBitsOn (src->uses) != 1 || bitVectnBitsOn (src->defs) != 0 || loopDepthOf (dic) != 0)
+    return NULL;
+  /* the parameter's slot is the temporary's from the copy on: nothing
+     may have written it before (a definition of the temporary earlier
+     in sequence would have, and with the copy outside any loop sequence
+     order is execution order) - the copy is the first definition */
+  lisaHome *h = homeFor (src, false);
+  return (!h || noOverLap (h->temps, sym)) ? src : NULL;
+}
+
 /* A temporary that exists only to be returned: one definition, in the
    iCode right before the RETURN that is its one use (so no other
    returned temporary's definition can come between them), of the size of
@@ -81,6 +178,19 @@ createStackSpil (symbol *sym)
   /* the return slot is its place: no spill location */
   if (lisaRetSlotTemp (sym))
     return sym;
+
+  /* born as a copy: the place of what it copies */
+  symbol *home = copyHome (sym);
+  if (home)
+    {
+      sym->usl.spillLoc = home;
+      sym->stackSpil = 1;
+      if (isinSet (lisaSlocs, home))
+        addSetHead (&home->usl.itmpStack, sym);
+      else
+        addSetHead (&homeFor (home, true)->temps, sym);
+      return sym;
+    }
 
   /* first look for an existing location that no clashing temporary uses */
   for (sloc = setFirstItem (lisaSlocs); sloc; sloc = setNextItem (lisaSlocs))
@@ -709,6 +819,9 @@ lisa_assignRegisters (ebbIndex *ebbi)
   iCode *ic;
 
   lisaSlocs = NULL;
+  lisaHomes = NULL;
+  lisaEbbs = ebbs;
+  lisaEbbCount = count;
   transformPointerSet (ebbs, count);
 
   /* change assignments this will remove some
