@@ -43,12 +43,44 @@ noOverLap (set *itmpStack, symbol *fsym)
   return 1;
 }
 
+/* A temporary that exists only to be returned: one definition, in the
+   iCode right before the RETURN that is its one use (so no other
+   returned temporary's definition can come between them), of the size of
+   the function's return slot (what the caller reserves above the saved RA
+   for a result of more than a byte).  The code generator (aopForRetSlot)
+   gives it the slot itself, so it needs no spill location. */
+bool
+lisaRetSlotTemp (const symbol *sym)
+{
+  if (!currFunc || !sym || !sym->isitmp || sym->_isparm || sym->remat)
+    return (false);
+  sym_link *rtype = currFunc->type->next;
+  int retsize = getSize (rtype);
+  if (!(retsize > 1 || IS_STRUCT (rtype)) || getSize (sym->type) != retsize)
+    return (false);
+  if (bitVectnBitsOn (sym->defs) != 1 || bitVectnBitsOn (sym->uses) != 1)
+    return (false);
+  const iCode *dic = hTabItemWithKey (iCodehTab, bitVectFirstBit (sym->defs));
+  const iCode *uic = hTabItemWithKey (iCodehTab, bitVectFirstBit (sym->uses));
+  if (!dic || !uic || uic->op != RETURN || dic->next != uic)
+    return (false);
+  if (!IC_LEFT (uic) || !IS_SYMOP (IC_LEFT (uic)) || OP_SYMBOL (IC_LEFT (uic)) != sym)
+    return (false);
+  if (!IC_RESULT (dic) || !IS_SYMOP (IC_RESULT (dic)) || OP_SYMBOL (IC_RESULT (dic)) != sym)
+    return (false);
+  return (true);
+}
+
 static symbol *
 createStackSpil (symbol *sym)
 {
   static int slocNum;
   symbol *sloc = 0;
   struct dbuf_s dbuf;
+
+  /* the return slot is its place: no spill location */
+  if (lisaRetSlotTemp (sym))
+    return sym;
 
   /* first look for an existing location that no clashing temporary uses */
   for (sloc = setFirstItem (lisaSlocs); sloc; sloc = setNextItem (lisaSlocs))

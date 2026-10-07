@@ -733,6 +733,28 @@ aopForRemat (symbol *sym)
 }
 
 /*-----------------------------------------------------------------*/
+/* aopForRetSlot - the return slot (entry-SP-relative 1..ret_size,  */
+/* reserved by the caller above the saved RA) as the asmop of a    */
+/* temporary that exists only to be returned (lisaRetSlotTemp).    */
+/* NULL otherwise.                                                 */
+/*-----------------------------------------------------------------*/
+static asmop *
+aopForRetSlot (const symbol *sym)
+{
+  /* the same test the allocator made when it gave the temporary no spill
+     location (ralloc.c); a byte the allocator put in A is ignored, both
+     accesses go to the slot */
+  if (!G.stack.ret_size || !lisaRetSlotTemp (sym) || getSize (sym->type) != G.stack.ret_size)
+    return (NULL);
+
+  asmop *aop = newAsmop (AOP_STK);
+  aop->size = G.stack.ret_size;
+  for (int i = 0; i < aop->size && i < 8; i++)
+    aop->aopu.bytes[i].byteu.stk = 1 + i;
+  return (aop);
+}
+
+/*-----------------------------------------------------------------*/
 /* aopOp - allocates an asmop for an operand  :                    */
 /*-----------------------------------------------------------------*/
 static void
@@ -786,6 +808,16 @@ aopOp (operand *op, const iCode *ic)
       asmop *aop = newAsmop (AOP_CND);
       op->aop = aop;
       sym->aop = sym->aop;
+      return;
+    }
+
+  /* A temporary made only to be returned is the return slot itself: the
+     iCode defining it writes there and genReturn has nothing to copy. */
+  asmop *slot = aopForRetSlot (sym);
+  if (slot)
+    {
+      op->aop = slot;
+      op->aop->valinfo = getOperandValinfo (ic, op);
       return;
     }
 
@@ -1530,12 +1562,10 @@ genReturn (const iCode *ic)
           slot.size = G.stack.ret_size;
           for (int i = 0; i < slot.size && i < 8; i++)
             slot.aopu.bytes[i].byteu.stk = 1 + i;
-          /* bytes beyond the 8 tracked ones are addressed from byte 0 */
+          /* bytes beyond the 8 tracked ones are addressed from byte 0; a
+             temporary that aopForRetSlot put in the slot is there already */
           for (int i = 0; i < G.stack.ret_size; i++)
-            {
-              loadA (left->aop, i);
-              storeA (&slot, i);
-            }
+            cheapMove (&slot, i, left->aop, i);
         }
       freeAsmop (left);
     }

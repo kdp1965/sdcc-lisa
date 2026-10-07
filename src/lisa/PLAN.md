@@ -331,11 +331,25 @@ version broke `xa / xb == -14` in test_divsh (the high byte of the compare
 was never written).  89 words for the 272 of the C files, which called
 the 16-bit routines with everything pushed again; test_signed 21-27.
 
+The return slot and the pointer copies (2026-10-07): a temporary that
+exists only to be returned - one definition, in the iCode right before
+the RETURN that is its one use, of the return slot's size
+(`lisaRetSlotTemp`, ralloc.c) - gets no spill location, and
+`aopForRetSlot` (gen.c) makes the slot (entry-SP-relative 1..ret_size)
+its asmop: the defining iCode writes there and genReturn's `cheapMove`
+finds nothing to copy.  The adjacency is what makes two returned
+temporaries unable to clobber each other.  And for lisa `offsetFoldUse`
+(SDCCopt.c) no longer leaves `t = p` behind the folded add: with the get
+right after it, the get reads the pointer itself, and so on back through
+a chain of adjacent single-use copies - the one SDCC makes of a
+parameter included (nothing coalesces temporaries on a one-register
+target).  `rd_scc` in test_ptroff: 29 words to 9; `(unsigned int)(l >>
+16)`: 18 to 5.
+
 Not done / next:
-* Code quality: a function's result is built in a temporary and copied
-  to the return slot (`rd_scc` in test_ptroff.asm); a char-result byte
-  division could skip the return slot (6 words at the call site instead
-  of 9) if genDivMod called a byte-returning helper of its own.
+* Code quality: a char-result byte division could skip the return slot
+  (6 words at the call site instead of 9) if genDivMod called a
+  byte-returning helper of its own.
 * `__critical` is just eidi (no interrupt state to save: `ie` cannot be
   read).
 

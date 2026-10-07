@@ -3157,6 +3157,32 @@ offsetFoldUse (eBBlock **ebbs, int count)
               IC_RIGHT (ic) = IC_LEFT (ic);
               IC_LEFT (ic) = 0;
               SET_ISADDR (IC_RESULT (ic), 0);
+
+              /* lisa: with the get right behind, it reads the pointer itself and the copy goes
+                 (nothing coalesces the temporary with the pointer on a one-register target) -
+                 and so does a chain of adjacent copies behind it, such as the one SDCC makes
+                 of a parameter */
+              if (TARGET_IS_LISA)
+                for (iCode *cic = ic;
+                     cic && cic->op == '=' && !POINTER_SET (cic) && cic->next == uic &&
+                     IS_SYMOP (IC_RIGHT (cic)) && !IS_OP_VOLATILE (IC_RIGHT (cic)) &&
+                     IS_ITEMP (IC_RESULT (cic)) && IS_SYMOP (IC_LEFT (uic)) &&
+                     OP_SYMBOL (IC_LEFT (uic)) == OP_SYMBOL (IC_RESULT (cic)) &&
+                     bitVectnBitsOn (OP_USES (IC_RESULT (cic))) == 1 && bitVectnBitsOn (OP_DEFS (IC_RESULT (cic))) == 1;)
+                  {
+                    iCode *pic = cic->prev;
+                    operand *p = operandFromOperand (IC_RIGHT (cic));
+                    p->isaddr = IC_LEFT (uic)->isaddr;
+                    bitVectUnSetBit (OP_USES (IC_LEFT (uic)), uic->key);
+                    IC_LEFT (uic) = p;
+                    bitVectSetBit (OP_USES (p), uic->key);
+                    unsetDefsAndUses (cic);
+                    remiCodeFromeBBlock (ebbs[i], cic);
+                    /* the pointer a temporary copied just before? */
+                    if (!IS_ITEMP (p) || !pic || pic->seq < ebbs[i]->fSeq)
+                      break;
+                    cic = pic;
+                  }
             }
         }
     }
