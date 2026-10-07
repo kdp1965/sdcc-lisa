@@ -3059,7 +3059,7 @@ offsetFoldGet (eBBlock **ebbs, int count)
   iCode *ic;
   iCode *uic;
 
-  if (!TARGET_Z80_LIKE && !TARGET_IS_STM8 && !TARGET_F8_LIKE)
+  if (!TARGET_Z80_LIKE && !TARGET_IS_STM8 && !TARGET_F8_LIKE && !TARGET_IS_LISA)
     return;
 
   for (i = 0; i < count; i++)
@@ -3083,12 +3083,17 @@ offsetFoldGet (eBBlock **ebbs, int count)
               wassertl (IC_RIGHT (ic), "ADDRESS_OF without right operand");
               wassertl (IS_OP_LITERAL (IC_RIGHT (ic)), "ADDRESS_OF with non-literal right operand");
 
+              long long newoff = uic->op == '+' ?
+                operandLitValueUll (IC_RIGHT (ic)) + operandLitValueUll (IC_RIGHT (uic)) :
+                operandLitValueUll (IC_RIGHT (ic)) - operandLitValueUll (IC_RIGHT (uic));
+
+              /* lisa: a negative offset to a stack object could wrap into the code-space tag */
+              if (TARGET_IS_LISA && newoff < 0)
+                continue;
+
               bitVectUnSetBit (OP_SYMBOL (IC_RESULT (ic))->uses, uic->key);
 
-              if (uic->op == '+')
-                IC_RIGHT (uic) = operandFromLit (operandLitValue (IC_RIGHT (ic)) + operandLitValue (IC_RIGHT (uic)));
-              else
-                IC_RIGHT (uic) = operandFromLit (operandLitValue (IC_RIGHT (ic)) - operandLitValue (IC_RIGHT (uic)));
+              IC_RIGHT (uic) = operandFromLit (newoff);
               IC_LEFT (uic) = operandFromOperand (IC_LEFT(ic));
               uic->op = ADDRESS_OF;
               IC_LEFT (uic)->isaddr = 1;
@@ -3111,7 +3116,7 @@ offsetFoldUse (eBBlock **ebbs, int count)
   iCode *ic;
   iCode *uic;
 
-  if (!(TARGET_Z80_LIKE && !TARGET_IS_SM83) && !TARGET_IS_STM8 && !TARGET_F8_LIKE) // All z80-related targets except sm83 support non-zero right operand. stm8 also supports it.
+  if (!(TARGET_Z80_LIKE && !TARGET_IS_SM83) && !TARGET_IS_STM8 && !TARGET_F8_LIKE && !TARGET_IS_LISA) // All z80-related targets except sm83 support non-zero right operand. stm8 and lisa also support it.
     return;
 
   for (i = 0; i < count; i++)
@@ -3138,10 +3143,15 @@ offsetFoldUse (eBBlock **ebbs, int count)
               wassertl (IC_RIGHT (uic), "GET_VALUE_AT_ADDRESS without right operand");
               wassertl (IS_OP_LITERAL (IC_RIGHT (uic)), "GET_VALUE_AT_ADDRESS with non-literal right operand");
 
-              if (ic->op == '+')
-                IC_RIGHT (uic) = operandFromLit (operandLitValue (IC_RIGHT (uic)) + operandLitValue (IC_RIGHT (ic)));
-              else
-                IC_RIGHT (uic) = operandFromLit (operandLitValue (IC_RIGHT (uic)) - operandLitValue (IC_RIGHT (ic)));
+              long long newoff = ic->op == '+' ?
+                operandLitValueUll (IC_RIGHT (uic)) + operandLitValueUll (IC_RIGHT (ic)) :
+                operandLitValueUll (IC_RIGHT (uic)) - operandLitValueUll (IC_RIGHT (ic));
+
+              /* lisa: the offset is the unsigned 9-bit field of ldax n(ix), or a byte for the helpers */
+              if (TARGET_IS_LISA && (newoff < 0 || newoff > 255))
+                continue;
+
+              IC_RIGHT (uic) = operandFromLit (newoff);
 
               ic->op = '=';
               IC_RIGHT (ic) = IC_LEFT (ic);

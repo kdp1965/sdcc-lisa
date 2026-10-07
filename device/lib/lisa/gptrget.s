@@ -40,18 +40,23 @@
 
 	.area CODE (CODE)
 
-	.globl __gptrget, __gptrgeto, __gptrcode, __gptrword, __gptrnext
+	.globl __gptrget, __gptrgeto, __gptrcode, __gptrcodeo, __gptrword, __gptrnext, __gptrprev
 
 ; IX = p + off (off in A, 0..127), p generic
 __gptrgeto:
 	push	a
 	txau
 	btst	7			; Z = bit 7: code space
-	bz	1$
+	bz	gptrcodeoff
 	pop	a
 	addax
 	br	__gptrdata
-1$:	txau
+
+; IX = p + off (off in A, 0..127), p a code pointer
+__gptrcodeo:
+	push	a
+gptrcodeoff:
+	txau
 	andi	#0x7f
 	addaxu
 	txa
@@ -95,3 +100,15 @@ __gptrnext:
 	ldax	0(ix)
 	adx	#1
 	ret
+
+; the byte before the last one read (a struct pushed high byte first):
+; IX raw and C from that read
+__gptrprev:
+	if	c
+	br.p	1$
+	adx	#-2
+	ldax	0(ix)
+	adx	#1
+	ret
+1$:	adx	#-4			; back over the pair just read and the one before
+	br	__gptrword

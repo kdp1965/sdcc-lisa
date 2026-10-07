@@ -1,6 +1,7 @@
 ;--------------------------------------------------------------------------
-;  divul.s - unsigned long division and remainder on the 16-bit hardware
-;  divider, for the LISA port (replaces _divulong.c and _modulong.c)
+;  divul.s - long division and remainder, unsigned and signed, on the
+;  16-bit hardware divider, for the LISA port (replaces _divulong.c,
+;  _modulong.c, _divslong.c and _modslong.c)
 ;
 ;  Copyright (C) 2026
 ;
@@ -41,8 +42,13 @@
 ; window over the top digit of the divisor, refined by the second
 ; digit, then the product subtracted and, on a borrow, the divisor
 ; added back once.  The shifts are multiplications by 2^s with mul /
-; mulu, which the silicon's flag bugs do not touch.  Both routines run
-; the same code; the flag picks what goes to the return slot.
+; mulu, which the silicon's flag bugs do not touch.  All four routines
+; run the same code; the flag picks what goes to the return slot.  The
+; signed ones first make the operands non-negative in place and negate
+; the result at the end when the signs call for it (a quotient when
+; they differ, a remainder when the dividend's is set) - one negation
+; per value, where the C wrappers negate operands and result again
+; around a call of the unsigned routine.
 ;
 ; Frame after sra and ads #-30:
 ;   1 T        scratch                 11..17 U[0..6]  dividend / remainder
@@ -51,24 +57,60 @@
 ;   4 S        shift (0..7)                   three digits, qhat * VT2; then
 ;   5 J        window offset                  P[0..4] = qhat * V
 ;   6 QHAT     7 RHAT                  27 VN           digits of V (2..4)
-;   8 VT       9 VT2   (V's top two)   29 VN == 2   30 VN <= 3  (the digits
-;  10 CY / CNT / 2^s                   of P above VN are 0: skipped)
+;   8 VT       9 VT2   (V's top two)   28 NEG          the result's sign (bit 7)
+;  10 CY / CNT / 2^s                   29 VN == 2   30 VN <= 3  (the digits
+;                                      of P above VN are 0: skipped)
 ;  31,32 RA  33..36 the result, holding Q[0..3] meanwhile  37..40 a  41..44 b
 
 	.area CODE (CODE)
 
-	.globl __divulong, __modulong
+	.globl __divulong, __modulong, __divslong, __modslong
 
 __divulong:
 	sra
+	ads	#-30
 	ldi	#0x00
+	stax	3(sp)			; FLAG: quotient
+	stax	28(sp)			; NEG: the result stays
 	br	udiv32
 __modulong:
 	sra
-	ldi	#0x01
-udiv32:
 	ads	#-30
-	stax	3(sp)			; FLAG
+	ldi	#0x01
+	stax	3(sp)			; FLAG: remainder
+	ldi	#0x00
+	stax	28(sp)
+	br	udiv32
+__divslong:
+	sra
+	ads	#-30
+	ldi	#0x00
+	stax	3(sp)
+	ldax	44(sp)			; the signs differ: a negative quotient
+	xor	40(sp)
+	br	sdiv32
+__modslong:
+	sra
+	ads	#-30
+	ldi	#0x01
+	stax	3(sp)
+	ldax	40(sp)			; the dividend's sign is the remainder's
+sdiv32:
+	andi	#0x80
+	stax	28(sp)			; NEG
+	ldax	40(sp)
+	btst	7
+	bnz	1$
+	spix
+	adx	#37
+	jal	neg4			; a = -a
+1$:	ldax	44(sp)
+	btst	7
+	bnz	udiv32
+	spix
+	adx	#41
+	jal	neg4			; b = -b
+udiv32:
 	ldi	#0x00
 	stax	2(sp)			; ZERO
 	stax	4(sp)			; S
@@ -487,9 +529,7 @@ storeq:
 result:
 	ldax	3(sp)
 	bnz	remainder
-	ads	#30			; the quotient is in the return slot
-	lra
-	ret
+	br	done			; the quotient is in the return slot
 remainder:
 	; U[0..3] >> S: U[k] = mulu(U[k], 2^(8-S)) | mul(U[k+1], 2^(8-S)), unless S == 0
 	ldax	4(sp)
@@ -533,9 +573,7 @@ remainder:
 	ldax	14(sp)
 	mulu	1(sp)
 	stax	36(sp)
-	ads	#30
-	lra
-	ret
+	br	done
 unshifted:
 	ldax	11(sp)
 	stax	33(sp)
@@ -545,6 +583,41 @@ unshifted:
 	stax	35(sp)
 	ldax	14(sp)
 	stax	36(sp)
-	ads	#30
+done:
+	ldax	28(sp)
+	btst	7
+	bnz	2$
+	spix
+	adx	#33
+	jal	neg4			; the result negated in place
+2$:	ads	#30
 	lra
+	ret
+
+; the four bytes at IX negated: ~x + 1 with the carry through adc #0 (ldi
+; clears C for the sub, whose own C the TT07 gets wrong; stax keeps it)
+neg4:
+	ldi	#0xff
+	sub	0(ix)
+	ldc	#1
+	adc	#0x00
+	stax	0(ix)
+	savec
+	ldi	#0xff
+	sub	1(ix)
+	restc
+	adc	#0x00
+	stax	1(ix)
+	savec
+	ldi	#0xff
+	sub	2(ix)
+	restc
+	adc	#0x00
+	stax	2(ix)
+	savec
+	ldi	#0xff
+	sub	3(ix)
+	restc
+	adc	#0x00
+	stax	3(ix)
 	ret

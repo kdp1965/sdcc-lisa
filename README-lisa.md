@@ -106,10 +106,13 @@ build/bin/sdcc -mlisa -o prog.ihx prog.c          # Intel HEX, byte addresses = 
   Constant data initializers that point into code space are scaled
   accordingly (`src/SDCCval.c`, `lisaCodeScale`).  A read through a
   generic or `__code` pointer is a call to `__gptrget` / `__gptrnext`
-  (`device/lib/lisa/gptrget.s`, 2 words per byte); `--opt-code-speed`
-  puts the space test and the `call ix` loop inline instead (12 words
-  for the first byte, but a few cycles faster per byte - string loops
-  care).
+  (`device/lib/lisa/gptrget.s`, 2 words per byte), with a constant
+  offset (`p->member`, `p[k]`: SDCC folds offsets of 0..255 into the
+  access for lisa) in A for `__gptrgeto` / `__gptrcodeo`, and a struct
+  passed by value through such a pointer is pushed last byte first with
+  `__gptrprev`; `--opt-code-speed` puts the space test and the `call ix`
+  loop inline instead (12 words for the first byte, but a few cycles
+  faster per byte - string loops care).
 * The data cache (the 32K data space on a SPI RAM, `lisa_isa.md` "TT07
   silicon data cache note"): tested on the chip with the RP2040 of the
   demo board emulating the RAM (`mbell_micropython` branch

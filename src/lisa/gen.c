@@ -3928,25 +3928,15 @@ genPointerGet (const iCode *ic)
      the space in C, which the stores between the calls keep */
   if (!optimize.codeSpeed && off <= 127)
     {
-      if (ptype == CPOINTER)
-        emit2 ("jal", off ? "__gptrcode" : "__gptrcode");
-      else if (off)
+      if (off)
         {
           emit2 ("ldi", "#0x%02x", off);
           cost (1, 1);
-          emit2 ("jal", "__gptrgeto");
+          emit2 ("jal", ptype == CPOINTER ? "__gptrcodeo" : "__gptrgeto");
         }
       else
-        emit2 ("jal", "__gptrget");
+        emit2 ("jal", ptype == CPOINTER ? "__gptrcode" : "__gptrget");
       cost (1, 12);
-      if (ptype == CPOINTER && off)
-        {
-          /* the pointer was turned into the word of its first pair: the
-             helper is re-entered past the offset */
-          emit2 ("adx", "#%d", 2 * off);
-          emit2 ("jal", "__gptrword");
-          cost (2, 10);
-        }
       ixInvalidate ();
       storeA (result->aop, 0);
       for (int i = 1; i < size; i++)
@@ -4054,6 +4044,32 @@ genPointerPush (const iCode *ic)
           cost (1, 1);
           pushA ();
         }
+      goto release;
+    }
+
+  /* out of line (lib/lisa/gptrget.s) unless speed matters: the last byte
+     through the offset helper, then __gptrprev walks back a byte at a
+     time (push a leaves C, the space, alone) */
+  if (!optimize.codeSpeed && off + size - 1 <= 127 && !(ptype == CPOINTER && left->aop->type == AOP_IMMD))
+    {
+      int last = off + size - 1;
+      if (last)
+        {
+          emit2 ("ldi", "#0x%02x", last);
+          cost (1, 1);
+          emit2 ("jal", ptype == CPOINTER ? "__gptrcodeo" : "__gptrgeto");
+        }
+      else
+        emit2 ("jal", ptype == CPOINTER ? "__gptrcode" : "__gptrget");
+      cost (1, 12);
+      pushA ();
+      for (int i = size - 2; i >= 0; i--)
+        {
+          emit2 ("jal", "__gptrprev");
+          cost (1, 12);
+          pushA ();
+        }
+      ixInvalidate ();
       goto release;
     }
 

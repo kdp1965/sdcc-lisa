@@ -16,20 +16,17 @@ include $(srcdir)/../incl.mk
 
 LISA_FLOAT = $(COMMON_FLOAT)
 
+# the int and long divisions and remainders are divu.s and divul.s (the
+# hardware divider)
 LISA_INT = $(COMMON_INT) \
   _mulint.c \
   _mulschar.c \
   _divuchar.c \
   _divschar.c \
-  _divsint.c \
   _moduchar.c \
-  _modschar.c \
-  _modsint.c
+  _modschar.c
 
-# the unsigned long division and remainder are divul.s (the hardware divider)
 LISA_LONG = \
-  _divslong.c \
-  _modslong.c \
   _mullong.c
 
 LISA_LONGLONG = $(COMMON_LONGLONG) \

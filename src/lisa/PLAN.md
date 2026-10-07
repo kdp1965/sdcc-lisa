@@ -299,10 +299,30 @@ temporary, and genCmp / genCmpEQorNE produce the inverted truth value
 straight into its result - `btst 7; ldac ne` for a signed `>= 0`, the
 chain's constants swapped otherwise, `eq`/`ne` flipped for `!(a == b)`.
 
+Pointer offsets and signed division (2026-10-07): SDCCopt's
+`offsetFoldGet` / `offsetFoldUse` run for lisa too (a folded offset of
+0..255 - the unsigned 9-bit field of `ldax n(ix)`, a byte for the
+helpers - and never negative, since a wrap below a stack object could
+set the code-space tag), so `p->member`, `p[k]` and `&local[k]` are one
+access carrying the offset instead of a 16-bit pointer add first (the
+`rd_scc` of test_ptroff: 6 words gone).  gptrget.s has `__gptrcodeo` (a
+code pointer plus the offset in A, without reading byte 0 first) and
+`__gptrprev` (the byte before the last one read), and
+IPUSH_VALUE_AT_ADDRESS - a struct through a generic or code pointer -
+goes through the helpers too, last byte first (`push a` leaves C, the
+space tag between the calls, alone).  `__divslong` / `__modslong`
+(divul.s) and `__divsint` / `__modsint` (divu.s) take the operands'
+absolute values in place (`neg4` / `neg2` through IX, the genUminus
+sequence), run the unsigned code and negate the result once; frame slot
+28 and the flag byte pushed at 1(sp) hold the sign.  The four C wrappers
+were 468 words and called the unsigned routine with everything pushed
+again; the entries are 107 words.  test_ptroff (built `--tt07-cache`),
+test_signed 16-20 and test_divl 55-60 cover it, on the chip as well.
+
 Not done / next:
-* Code quality: the pointer-write side (`stax k(ix)` already) and
-  IPUSH_VALUE_AT_ADDRESS through the helpers, signed long division
-  without the C wrappers' double negation.
+* Code quality: `_divschar` / `_modschar` are still the C wrappers; a
+  function's result is built in a temporary and copied to the return
+  slot (`rd_scc` in test_ptroff.asm).
 * `ROT` and `GETWORD` are not claimed (`hasExtBitOp`: GETBYTE only), so
   SDCC lowers them itself; `__critical` is just eidi (no interrupt state
   to save: `ie` cannot be read).
