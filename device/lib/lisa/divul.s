@@ -166,6 +166,7 @@ clz:
 	ldc	#0
 	shl
 	stax	1(sp)
+	cmp	4(sp)		; TT07: a hit for the inx
 	inx	4(sp)			; S
 	ldax	10(sp)
 	ldc	#0
@@ -304,6 +305,7 @@ refine:
 	if	nc
 	br.p	mulsub
 toobig:
+	cmp	6(sp)		; TT07: a hit for the dcx
 	dcx	6(sp)
 	ldax	7(sp)
 	add	8(sp)
@@ -437,6 +439,7 @@ sub5:
 	if	nc
 	br.p	storeq
 	; a borrow out: QHAT was one too big, add V back (the carry out drops)
+	cmp	6(sp)		; TT07: a hit for the dcx
 	dcx	6(sp)
 	ldax	0(ix)
 	add	18(sp)
@@ -476,6 +479,7 @@ storeq:
 	addax				; IX = &Q[J], in the return slot
 	ldax	6(sp)
 	stax	0(ix)
+	cmp	5(sp)		; TT07: a hit for the dcx
 	dcx	5(sp)			; C = J was 0
 	if	nc
 	br.p	step
@@ -501,6 +505,7 @@ remainder:
 	ldc	#0
 	shl
 	stax	1(sp)
+	cmp	10(sp)		; TT07: a hit for the dcx
 	dcx	10(sp)
 	ldax	10(sp)
 	bnz	5$

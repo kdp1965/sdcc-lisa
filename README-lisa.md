@@ -110,6 +110,18 @@ build/bin/sdcc -mlisa -o prog.ihx prog.c          # Intel HEX, byte addresses = 
   puts the space test and the `call ix` loop inline instead (12 words
   for the first byte, but a few cycles faster per byte - string loops
   care).
+* The data cache (the 32K data space on a SPI RAM, `lisa_isa.md` "TT07
+  silicon data cache note"): tested on the chip with the RP2040 of the
+  demo board emulating the RAM (`mbell_micropython` branch
+  `lisa_spi_ram`, `tt07-um-lisa-ttlc/lisa-test/test/hw_test.mjs
+  spiram=<file>`).  Every `sdcc_test` suite passes through it, with the
+  silicon's quirks worked around in the generated code: no `swap n(sp)`
+  (it addresses sp + n - 512) and a `cmp` of the byte before every
+  `inx`/`dcx` (a read-modify-write that misses the cache works on stale
+  data).  The cache's own bug - data addresses X and X ^ 0x4000 share a
+  RAM location - means a program must not use both halves of the data
+  space at addresses that differ only in bit 14; `--stack-loc 0x7fff`
+  with the globals below 0x4000 is fine.
 * Code size: `gen.c` tracks what A holds and skips reloads, compares
   against 0 are sign-bit tests or `bnz` chains, and the peephole rules
   (`src/lisa/peeph.def`) thread branches and drop dead code; `--no-peep`

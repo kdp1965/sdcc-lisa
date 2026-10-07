@@ -155,6 +155,7 @@ copy:
 	push	a		; the pair {1(sp), A}; every offset below is one more
 	ldi	#0x00
 shift:
+	cmp	9(sp)		; TT07: a hit for the dcx
 	dcx	9(sp)		; d--; C = it was 0
 	if	c
 	br.p	shifted
@@ -190,6 +191,7 @@ shifted:
 	stax	7(sp)		; SL
 	pop	a
 	stax	5(sp)		; SH
+	cmp	7(sp)		; TT07: a hit for the inx
 	inx	7(sp)
 	br	round
 subtract:
@@ -223,6 +225,7 @@ norm:
 	pop	a		; A = SL
 	ldc	#0
 	shl16	1(sp)		; 1(sp) = {SH[6:0], SL[7]}, A = {SL[6:0], 0}
+	cmp	8(sp)		; TT07: a hit for the dcx
 	dcx	8(sp)		; e--, Z = it reached 0
 	bnz	norm
 	ads	#1
@@ -243,11 +246,13 @@ round:
 	btst	0
 	bnz	pack		; even: stays
 round_up:
+	cmp	5(sp)		; TT07: a hit for the inx
 	inx	5(sp)		; C = it was 0xff: the mantissa wraps to 1.0, e++
 	if	nc
 	br.p	pack
 	ldi	#0x80
 	stax	5(sp)
+	cmp	7(sp)		; TT07: a hit for the inx
 	inx	7(sp)
 pack:
 	ldax	7(sp)

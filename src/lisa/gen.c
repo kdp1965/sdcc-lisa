@@ -1930,11 +1930,21 @@ genAddSub (const iCode *ic, bool sub)
   bool litright = (raop->type == AOP_LIT || raop->type == AOP_IMMD);
   bool litleft = (laop->type == AOP_LIT || laop->type == AOP_IMMD);
 
-  /* inc / dec of a memory operand by one: inx/dcx with predication */
+  /* inc / dec of a memory operand by one: inx/dcx with predication.  On
+     the TT07 silicon a read-modify-write that misses the data cache
+     works on stale data (lisa_isa.md), so each byte's line is touched
+     with a cmp first - a read waits for the cache - and the inx / dcx
+     then hit (the bytes of one operand are in adjacent lines at most,
+     which never share a cache index) */
   if (!litleft && aopIsMem (laop, 0) && raop->type == AOP_LIT && aopSame (result->aop, 0, laop, 0, size) &&
       (aopIsLitVal (raop, 0, size, 1)))
     {
       const char *op = sub ? "dcx" : "inx";
+      for (int i = size - 1; i >= 0; i--)
+        {
+          emit2 ("cmp", "%s", memArg (laop, i));
+          cost (1, 1);
+        }
       emit2 (op, "%s", memArg (laop, 0));
       cost (1, 2);
       for (int i = 1; i < size; i++)
@@ -3148,6 +3158,8 @@ genShift (const iCode *ic, bool left_shift)
           }
         pushA ();
         loadA (left->aop, 0);
+        emit2 ("cmp", "2(sp)");         /* the count's line into the cache before the dcx (TT07) */
+        cost (1, 1);
         emitLbl (tlbl);
         emit2 ("dcx", "2(sp)");
         emit2 ("if", "c");

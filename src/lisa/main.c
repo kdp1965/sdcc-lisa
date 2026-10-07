@@ -134,6 +134,8 @@ lisa_genInitStartup (FILE *of)
   fprintf (of, "\tldi\t#0\n");
   fprintf (of, "\tstax\t0(ix)\n");
   fprintf (of, "\tadx\t#1\n");
+  fprintf (of, "\tcmp\t2(sp)\n");          /* TT07: the count's lines into the cache before the dcx */
+  fprintf (of, "\tcmp\t1(sp)\n");
   fprintf (of, "\tdcx\t1(sp)\n");
   fprintf (of, "\tif\tc\n");
   fprintf (of, "\tdcx\t2(sp)\n");
@@ -153,6 +155,8 @@ lisa_genInitStartup (FILE *of)
   fprintf (of, "\tldi\t#0\n");
   fprintf (of, "\tstax\t0(ix)\n");
   fprintf (of, "\tadx\t#1\n");
+  fprintf (of, "\tcmp\t2(sp)\n");          /* TT07: the count's lines into the cache before the dcx */
+  fprintf (of, "\tcmp\t1(sp)\n");
   fprintf (of, "\tdcx\t1(sp)\n");
   fprintf (of, "\tif\tc\n");
   fprintf (of, "\tdcx\t2(sp)\n");
@@ -179,10 +183,14 @@ lisa_genInitStartup (FILE *of)
   fprintf (of, "\tpush\tix\n");
   fprintf (of, "\tldxx\t3(sp)\n");
   fprintf (of, "\tstax\t0(ix)\n");
+  fprintf (of, "\tcmp\t4(sp)\n");          /* TT07: the pointer's lines into the cache before the inx */
+  fprintf (of, "\tcmp\t3(sp)\n");
   fprintf (of, "\tinx\t3(sp)\n");
   fprintf (of, "\tif\tc\n");
   fprintf (of, "\tinx\t4(sp)\n");
   fprintf (of, "\tpop\tix\n");
+  fprintf (of, "\tcmp\t4(sp)\n");
+  fprintf (of, "\tcmp\t3(sp)\n");
   fprintf (of, "\tdcx\t3(sp)\n");
   fprintf (of, "\tif\tc\n");
   fprintf (of, "\tdcx\t4(sp)\n");
@@ -208,10 +216,14 @@ lisa_genInitStartup (FILE *of)
   fprintf (of, "\tpush\tix\n");
   fprintf (of, "\tldxx\t3(sp)\n");
   fprintf (of, "\tstax\t0(ix)\n");
+  fprintf (of, "\tcmp\t4(sp)\n");          /* TT07: the pointer's lines into the cache before the inx */
+  fprintf (of, "\tcmp\t3(sp)\n");
   fprintf (of, "\tinx\t3(sp)\n");
   fprintf (of, "\tif\tc\n");
   fprintf (of, "\tinx\t4(sp)\n");
   fprintf (of, "\tpop\tix\n");
+  fprintf (of, "\tcmp\t4(sp)\n");
+  fprintf (of, "\tcmp\t3(sp)\n");
   fprintf (of, "\tdcx\t3(sp)\n");
   fprintf (of, "\tif\tc\n");
   fprintf (of, "\tdcx\t4(sp)\n");

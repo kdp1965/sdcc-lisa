@@ -280,6 +280,17 @@ genIpush parks a live A in IX's low byte (tax / txa) or swaps through
 `spix; adx #1; swap 0(ix)`; bf16add.s tests the hidden bit through a
 push.  lisa_sim models the silicon address.
 
+The data cache on the chip (2026-10-06, the RP2040 as a 32K SPI RAM on
+CS1: `mbell_micropython` branch `lisa_spi_ram`, `hw_test.mjs spiram=`):
+every sdcc_test suite passes through it.  Besides `swap n(sp)`, the
+silicon's RMW instructions work on stale data when the byte misses the
+cache, so `genAddSub`'s inx/dcx, the shift loops' dcx, the startup
+copy loops (`lisa_genInitStartup`) and divul.s / bf16add.s touch each
+byte's line with a `cmp` first.  And the cache maps bit 14 of the data
+address to nothing (data_cache8.v uses cache_map[1] for qspi_addr[14]),
+so X and X ^ 0x4000 alias; programs keep their data below 0x4000 and
+the stack above.  lisa_isa.md has the three notes.
+
 Not done / next:
 * Code quality: the pointer-write side (`stax k(ix)` already) and
   IPUSH_VALUE_AT_ADDRESS through the helpers, `x >= 0` as a value
