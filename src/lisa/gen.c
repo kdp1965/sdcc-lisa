@@ -2390,6 +2390,24 @@ genXor (const iCode *ic)
    sides by 0x80 and compares unsigned.  A signed compare against a memory
    byte branches on the zero case. */
 
+/* The '!' that consumes a compare's result and nothing else does (x >= 0
+   reaches the generator as !(x < 0)): like ifxForOp, the next iCode past
+   any IPOP, with the temporary dying there.  The compare then produces
+   the inverted truth value straight into the !'s result. */
+static iCode *
+notForOp (const operand *op, const iCode *ic)
+{
+  if (IS_TRUE_SYMOP (op) || !IS_ITEMP (op))
+    return (0);
+  iCode *nic = ic->next;
+  while (nic && nic->op == IPOP)
+    nic = nic->next;
+  if (nic && nic->op == '!' && IS_SYMOP (IC_LEFT (nic)) && IC_LEFT (nic)->key == op->key &&
+      OP_SYMBOL_CONST (op)->liveFrom >= ic->seq && OP_SYMBOL_CONST (op)->liveTo <= nic->seq)
+    return (nic);
+  return (0);
+}
+
 /* The condition that is true exactly when cc is false (lt is C && !Z,
    ge is !C || Z, and so on), or 0 for a code that is not known. */
 static const char *
@@ -2473,6 +2491,15 @@ genCmp (const iCode *ic, iCode *ifx)
 
   D (emit2 ("; genCmp", ""));
 
+  /* a ! on the result: produce its inverse into the !'s result instead */
+  iCode *notic = ifx ? 0 : notForOp (result, ic);
+  bool inv = (notic != 0);
+  if (notic)
+    {
+      result = IC_RESULT (notic);
+      notic->generated = 1;
+    }
+
   aopOp (left, ic);
   aopOp (right, ic);
   aopOp (result, ic);
@@ -2532,7 +2559,7 @@ genCmp (const iCode *ic, iCode *ifx)
         }
       else
         {
-          emit2 ("ldac", "%s", cc);
+          emit2 ("ldac", "%s", inv ? condInverse (cc) : cc);
           cost (1, 1);
           storeA (result->aop, 0);
           for (int i = 1; i < result->aop->size; i++)
@@ -2567,7 +2594,7 @@ genCmp (const iCode *ic, iCode *ifx)
         }
       else
         {
-          emit2 ("ldac", "%s", cc_true);
+          emit2 ("ldac", "%s", inv ? condInverse (cc_true) : cc_true);
           cost (1, 1);
           storeA (result->aop, 0);
           for (int i = 1; i < result->aop->size; i++)
@@ -2675,11 +2702,11 @@ genCmp (const iCode *ic, iCode *ifx)
   else
     {
       emitLbl (tlbl_false);
-      emit2 ("ldi", "#0x00");
+      emit2 ("ldi", inv ? "#0x01" : "#0x00");
       cost (1, 1);
       emitBranch ("br", tlbl_done);
       emitLbl (tlbl_true);
-      emit2 ("ldi", "#0x01");
+      emit2 ("ldi", inv ? "#0x00" : "#0x01");
       cost (1, 1);
       emitLbl (tlbl_done);
       storeA (result->aop, 0);
@@ -2710,6 +2737,15 @@ genCmpEQorNE (const iCode *ic, iCode *ifx)
   int size;
 
   D (emit2 ("; genCmpEQorNE", ""));
+
+  /* a ! on the result: the inverse into the !'s result instead */
+  iCode *notic = ifx ? 0 : notForOp (result, ic);
+  if (notic)
+    {
+      result = IC_RESULT (notic);
+      notic->generated = 1;
+      eq = !eq;
+    }
 
   aopOp (left, ic);
   aopOp (right, ic);

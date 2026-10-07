@@ -293,11 +293,16 @@ so X and X ^ 0x4000 alias; `--tt07-cache` (main.c) puts the stack at
 the data limit 0x4000 - reserve as -X, which lkarea.c enforces for
 LISA (lkmain.c consumes -S).  lisa_isa.md has the three notes.
 
+`x >= 0` as a value (2026-10-06): SDCC hands it over as `t = x < 0; r =
+!t`; `notForOp` (like ifxForOp) finds the `!` that consumes a compare's
+temporary, and genCmp / genCmpEQorNE produce the inverted truth value
+straight into its result - `btst 7; ldac ne` for a signed `>= 0`, the
+chain's constants swapped otherwise, `eq`/`ne` flipped for `!(a == b)`.
+
 Not done / next:
 * Code quality: the pointer-write side (`stax k(ix)` already) and
-  IPUSH_VALUE_AT_ADDRESS through the helpers, `x >= 0` as a value
-  (`btst 7; ldac ne`), signed long division without the C wrappers'
-  double negation.
+  IPUSH_VALUE_AT_ADDRESS through the helpers, signed long division
+  without the C wrappers' double negation.
 * `ROT` and `GETWORD` are not claimed (`hasExtBitOp`: GETBYTE only), so
   SDCC lowers them itself; `__critical` is just eidi (no interrupt state
   to save: `ie` cannot be read).
