@@ -73,7 +73,12 @@ build/bin/sdcc -mlisa -o prog.ihx prog.c          # Intel HEX, byte addresses = 
   quotient by 1 - so a 16-bit quotient or remainder by a variable divisor
   is the library's `__divuint` / `__moduint`, which check - see the
   silicon notes in `lisa_isa.md`.  16-bit shifts use `shl16` / `shr16`
-  on the `{n(sp), A}` pair.
+  on the `{n(sp), A}` pair.  `unsigned long` `/` and `%` (and the signed
+  ones on top of them) are `device/lib/lisa/divul.s`: a divisor below
+  256 is four 16/8 hardware divisions, anything else Knuth's algorithm D
+  in base 256 with the digit estimates on the divider - about 100 and
+  500-600 instructions a call against 3000-6000 for the bit-serial C
+  routines.
 * The bfloat16 unit: `#include <lisa/bf16.h>` gives `bf16_t` (the bit
   pattern) with `bf16_mul`/`bf16_div`/`bf16_gt`/`bf16_eq`/`bf16_cmp`/
   `bf16_from_uint`/`bf16_to_uint` on the hardware, `bf16_add`/`bf16_sub`

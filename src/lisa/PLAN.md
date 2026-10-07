@@ -255,10 +255,28 @@ inverts it again).  A 16-bit literal is pushed as `ldxs #lit; push ix`
 `push ix` puts that out as bit 7 of the high half - so never for a
 symbol address.
 
+32-bit division (2026-10-06): `__divulong`/`__modulong` are
+`device/lib/lisa/divul.s`, one body with a flag.  A divisor below 256:
+four 16/8 divisions (`lddiv`, `div 0, 2(sp)` / `rem 0, 2(sp)` with a
+zero byte kept at 2(sp), the result always a byte so RA is never read).
+Otherwise Knuth D in base 256: VN = 2..4 divisor digits normalized by
+2^s (mul/mulu by 2^s, no shift loops), the dividend into 5 digits, 5-VN
+quotient digits, each estimated as {top two digits} / VT on the divider
+(clamped to 255 when the top digit equals VT), refined with VT2, the
+product subtracted with the borrow folded into the next product byte so
+the silicon's `sub M` is always guarded by `cpi #1`, one add-back on a
+borrow; the remainder un-normalized by multiplying with 2^(8-s).  The
+frame is 30 bytes (the quotient digits go straight into the return
+slot; the test `test_divl.c` runs on the 128-byte default stack).
+~105 instructions for a byte divisor, 500-600 for 16/32-bit ones, 439
+words for both.  `test_divl.c` (table, signed, 200 LCG cases against a
+bit-serial reference) passes on the chip.
+
 Not done / next:
-* Code quality: 32-bit division on the 16-bit divider, the pointer-write
-  side (`stax k(ix)` already) and IPUSH_VALUE_AT_ADDRESS through the
-  helpers, `x >= 0` as a value (`btst 7; ldac ne`).
+* Code quality: the pointer-write side (`stax k(ix)` already) and
+  IPUSH_VALUE_AT_ADDRESS through the helpers, `x >= 0` as a value
+  (`btst 7; ldac ne`), signed long division without the C wrappers'
+  double negation.
 * `ROT` and `GETWORD` are not claimed (`hasExtBitOp`: GETBYTE only), so
   SDCC lowers them itself; `__critical` is just eidi (no interrupt state
   to save: `ie` cannot be read).
