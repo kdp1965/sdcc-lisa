@@ -128,6 +128,11 @@ build/bin/sdcc -mlisa -o prog.ihx prog.c          # Intel HEX, byte addresses = 
   memset,strcpy,strlen,strcmp}.s`): they test each source's space once
   and run a loop for it, RAM or `call ix`, the pointers swapped through
   IX with `ldxx` / `stxx` (2-15 times the speed of the C on the chip).
+  An unqualified pointer is generic; a `__near` pointer is RAM only and
+  reads with `ldxx; ldax 0(ix)`, no helper and no space test - a
+  `while (*p)` byte walk on the chip takes 54 ms through a `__near`
+  pointer against 88 through a generic one (23 bytes x 32).  Use it for
+  buffers that are never in code space.
 * The data cache (the 32K data space on a SPI RAM, `lisa_isa.md` "TT07
   silicon data cache note"): tested on the chip with the RP2040 of the
   demo board emulating the RAM (`mbell_micropython` branch

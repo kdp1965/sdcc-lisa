@@ -131,6 +131,8 @@ aInvalidate (void)
   G.a.zvalid = false;
 }
 
+static void ixInvalidate (void);
+
 /* The A tracker: every emitted instruction passes through here.  A load
    of a near stack byte, a direct byte or a literal is remembered; a
    store makes A known as the stored byte when it was not; anything else
@@ -146,6 +148,18 @@ aTrack (const char *inst, const char *opnd, bool pred)
 
   if (!inst[0] || inst[0] == ';')
     return;
+  /* IX mirrors a stack slot (G.ix of type AOP_STK, ixLoadValue): a write
+     into either of its bytes - the inx of a pointer kept there - makes
+     IX stale */
+  if (G.ix.type == AOP_STK &&
+      (!strcmp (inst, "stax") || !strcmp (inst, "inx") || !strcmp (inst, "dcx") || !strcmp (inst, "stxx") ||
+       !strcmp (inst, "swap") || !strcmp (inst, "swapi") || !strcmp (inst, "shl16") || !strcmp (inst, "shr16")) &&
+      sscanf (opnd, "%d(sp%c", &n, &junk) == 2 && junk == ')')
+    {
+      int lo = n - G.stack.pushed, bytes = !strcmp (inst, "stxx") ? 2 : 1;
+      if (lo + bytes > G.ix.offset && lo <= G.ix.offset + 1)
+        ixInvalidate ();
+    }
   /* a remembered stack byte that has been dropped (at or below SP) may be
      overwritten by a push with something else */
   if (G.a.kind == A_STK && G.a.stk + G.stack.pushed <= 0)

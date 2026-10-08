@@ -511,6 +511,27 @@ when *s2 is the NUL.  On the chip (23 bytes x 32, ms): RAM/RAM 175 to
 against the C's 40 (test_regress and test_pfu +62 each; the monitor
 does not link it).  test_strs 15-19.
 
+The compiled-loop scan (2026-10-07): 303 loops in the corpus's .asm
+(the startup copies left out), 15.6K body words, loads and stores of
+stack bytes 37% of them.  Timed on the chip (23 iterations x 32): a
+`while (*p)` byte walk through a generic pointer 88 ms, the same loop
+inverted by hand 111 (SDCC reads *p again for the bottom test; the
+top-tested form reuses the one load), and a counted `while (i < n)` 87
+ms top- or bottom-tested alike - so loop inversion gains nothing on
+this chip and is not done (the back-branch is a word, not a line
+fetch, as the predication measurement also found).  What does pay: a
+`__near` pointer (unqualified pointers are generic), whose read is
+`ldxx; ldax 0(ix)` with no space test - the same walk 54 ms - and that
+found a bug: a near pointer kept in IX for the body's read was bumped
+in place by `inx` for p++ and the loop's test read through the stale
+IX, one iteration too many; aTrack now invalidates IX on any write into
+the slot it mirrors (stax, inx / dcx, stxx, swap, shl16 / shr16;
+test_regress 24; no other program's code changed).  Still open from
+the scan: a byte-indexed array access `a[i]` is 10 words (a 16-bit add
+into a temporary, then ldxx / ldax) where `ldx #_a; ldax i(sp); addax;
+ldax 0(ix)` is 5, and a variable shift of a long is 14-17 words per
+bit (ldax / shl / stax per byte, the count tested at the top).
+
 Not done / next:
 * `__critical` is just eidi (no interrupt state to save: `ie` cannot be
   read).
