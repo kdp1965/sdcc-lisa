@@ -532,6 +532,23 @@ into a temporary, then ldxx / ldax) where `ldx #_a; ldax i(sp); addax;
 ldax 0(ix)` is 5, and a variable shift of a long is 14-17 words per
 bit (ldax / shl / stax per byte, the count tested at the top).
 
+The indexed address (2026-10-07, genIndexedAddr in genAddSub): the
+'+' of `a[i]` or `p + i` - a data symbol, the address of a stack
+object or a near pointer in a stack slot, plus a one-byte unsigned or
+two-byte index in a stack slot or in A - forms the address in IX (`ldx
+#_a; ldax i(sp); addax`, then `ldax hi(sp); addaxu` for two bytes), stores
+it with stxx and leaves IX holding it, which ixLoadPtr finds for the
+access that follows: 6 words for `a[i]` where the 16-bit add into the
+temporary and its ldxx were 10.  addax sets ix_cond, so the stored
+temporary carries bit 15 - fine for `ldax` / `stax n(ix)` and nothing
+else, so only a temporary of a non-generic pointer type whose every use
+(OP_USES, iCodehTab) is a GET_VALUE_AT_ADDRESS or SET_VALUE_AT_ADDRESS
+through it takes this path; `&a[i]` that escapes, and `p[i]` through a
+generic pointer, keep the plain add.  On the chip the counted `while (i
+< n) s += a[i]` loop went 87 to 75 ms; the corpus 48518 to 48448, the
+monitor alone -46 (its `line[n]`), the test programs index through
+pointers and mostly do not change.  test_index.
+
 Not done / next:
 * `__critical` is just eidi (no interrupt state to save: `ie` cannot be
   read).

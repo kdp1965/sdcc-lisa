@@ -466,6 +466,8 @@ stkIsFar (const asmop *aop, int offset)
 
 static void ixLoadStackAddr (int stk_off);
 static void ixInvalidate (void);
+static void ixLoadPtr (const asmop *aop);
+static bool ixLoadPtrClobbersA (const asmop *aop);
 
 /* The tracked base reaches the byte: its rem(ix) offset, else -1. */
 static int
@@ -2003,6 +2005,95 @@ fixBitIntResult (const iCode *ic, bool sign_extend)
   storeA (result->aop, result->aop->size - 1);
 }
 
+/* A base for an indexed address: a data symbol, the address of a stack
+   object or a pointer in a near stack slot. */
+static bool
+indexBase (const asmop *aop)
+{
+  if (aop->size != 2)
+    return (false);
+  switch (aop->type)
+    {
+    case AOP_IMMD:
+      return (!aop->aopu.code && !aop->aopu.func);
+    case AOP_STL:
+      return (true);
+    case AOP_STK:
+      return (!stkIsFar (aop, 0) && !stkIsFar (aop, 1));
+    default:
+      return (false);
+    }
+}
+
+/* The '+' of a[i] or p + i whose result nothing but reads and writes
+   through it in data space use: IX = base + index (ldx / ldxx / spix,
+   then ldax; addax, and ldax; addaxu for a two-byte index), stxx into
+   the result's slot, and IX left holding it for the access that follows
+   (ixLoadPtr finds it there).  addax sets ix_cond, so the slot carries
+   bit 15: harmless to ldax / stax n(ix), wrong for anything else - hence
+   the test of the uses. */
+static bool
+genIndexedAddr (const iCode *ic, asmop *laop, asmop *raop)
+{
+  operand *result = IC_RESULT (ic);
+  if (!IS_ITEMP (result) || result->aop->type != AOP_STK || result->aop->size != 2 ||
+      stkIsFar (result->aop, 0) || stkIsFar (result->aop, 1))
+    return (false);
+  sym_link *rtype = operandType (result);
+  if (!IS_PTR (rtype) || IS_FUNC (rtype->next) || DCL_TYPE (rtype) == CPOINTER || DCL_TYPE (rtype) == GPOINTER)
+    return (false);
+  const bitVect *uses = OP_USES (result);
+  if (!uses || bitVectIsZero (uses))
+    return (false);
+  for (int i = 0; i < uses->size; i++)
+    {
+      if (!bitVectBitValue (uses, i))
+        continue;
+      const iCode *uic = hTabItemWithKey (iCodehTab, i);
+      if (!uic || uic->op != GET_VALUE_AT_ADDRESS && uic->op != SET_VALUE_AT_ADDRESS ||
+          !IS_SYMOP (IC_LEFT (uic)) || IC_LEFT (uic)->key != result->key ||
+          uic->op == SET_VALUE_AT_ADDRESS && IS_SYMOP (IC_RIGHT (uic)) && IC_RIGHT (uic)->key == result->key)
+        return (false);
+    }
+
+  asmop *base, *idx;
+  if (indexBase (laop))
+    base = laop, idx = raop;
+  else if (indexBase (raop))
+    base = raop, idx = laop;
+  else
+    return (false);
+  if (idx->size < 1 || idx->size > 2)
+    return (false);
+  if (idx->type == AOP_REG)
+    {
+      if (ixLoadPtrClobbersA (base))
+        return (false);
+    }
+  else if (idx->type != AOP_STK || stkIsFar (idx, 0) || stkIsFar (idx, idx->size - 1))
+    return (false);
+  /* a one-byte index is added zero-extended */
+  const operand *iop = (idx == IC_LEFT (ic)->aop) ? IC_LEFT (ic) : IC_RIGHT (ic);
+  if (idx->size == 1 && !SPEC_USIGN (getSpec (operandType (iop))))
+    return (false);
+
+  ixLoadPtr (base);
+  loadA (idx, 0);
+  emit2 ("addax", "");
+  cost (1, 1);
+  if (idx->size == 2)
+    {
+      loadA (idx, 1);
+      emit2 ("addaxu", "");
+      cost (1, 1);
+    }
+  emit2 ("stxx", "%s", stkArg (result->aop, 0));
+  cost (1, 2);
+  G.ix.type = AOP_STK;
+  G.ix.offset = result->aop->aopu.bytes[0].byteu.stk;
+  return (true);
+}
+
 static void
 genAddSub (const iCode *ic, bool sub)
 {
@@ -2080,6 +2171,10 @@ genAddSub (const iCode *ic, bool sub)
         }
       goto release;
     }
+
+  /* a[i]: the address formed in IX */
+  if (!sub && genIndexedAddr (ic, laop, raop))
+    goto release;
 
   for (int i = 0; i < size; i++)
     {
