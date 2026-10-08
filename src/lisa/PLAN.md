@@ -489,6 +489,15 @@ plus the monitor went 47564 to 47710 words (test_strs +48, test_printf
 test_strs 5-14: sources in code space and in RAM, empty strings, n ==
 0, the returns.
 
+A shared loop, measured and not adopted (2026-10-07): one loop for
+both spaces, the space kept in C by `savec` and `restc; ifte c; call
+ix; ldax 0(ix)` picking the read (the pair's `ret` brings cond[0] = 0
+back from ra_cond, so the ldax is skipped after a call), saves 7 words
+of memcpy (9 under the cache) and 5 of strcpy - the corpus 47710 to
+47686 - for the two words per byte: on the chip memcpy from RAM 42 to
+54 ms and strcpy 42 to 54, copies from code space unchanged (66 to
+67).  The two loops stay.
+
 Not done / next:
 * `__critical` is just eidi (no interrupt state to save: `ie` cannot be
   read).
