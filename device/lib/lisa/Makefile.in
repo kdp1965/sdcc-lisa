@@ -22,6 +22,19 @@ SAS = $(top_builddir)/bin/sdaslisa
 
 override PORTDIR = ../build/$(MODEL)
 
+# the .s sources first: memcpy.s / strlen.s stand in for ../memcpy.c /
+# ../strlen.c, which the .c rules of incl.mk would otherwise pick.  They
+# .include lisamodel.inc, which says whether this is the --tt07-cache
+# library (TT07_CACHE: the cmp before each inx / dcx)
+lisamodel.inc: Makefile
+	echo "TT07_CACHE = $(if $(filter lisa-cache,$(MODEL)),1,0)" > $@
+
+%.rel: %.s lisamodel.inc
+	@# TODO: sdas should place it\'s output in the current dir
+	test "`cd $(dir $<) && pwd`" = "`pwd`" || cp $< .
+	-$(AS) $(ASFLAGS) $(notdir $<)
+	test "`cd $(dir $<) && pwd`" = "`pwd`" || rm $(notdir $<)
+
 include $(srcdir)/../incl.mk
 
 LISA_FLOAT = $(COMMON_FLOAT)
@@ -46,21 +59,16 @@ LISA_LONGLONG = $(COMMON_LONGLONG) \
   _modslonglong.c \
   _modulonglong.c
 
-LISA_SDCC = $(COMMON_SDCC) \
+LISA_SDCC = $(filter-out _memset.c,$(COMMON_SDCC)) \
   __itoa.c \
   __ltoa.c \
   _startup.c \
   _strcmp.c \
-  _strcpy.c \
   _strncpy.c \
   _strcat.c \
   _strchr.c \
-  strlen.c \
   strnlen.c \
   _memmove.c \
-  __memcpy.c \
-  memcpy.c \
-  _memset.c \
   _memcmp.c \
   div.c \
   ldiv.c \
@@ -74,7 +82,10 @@ LISA_SDCC = $(COMMON_SDCC) \
 LISASOURCES = $(addprefix ../,$(LISA_FLOAT) $(LISA_INT) $(LISA_LONG) $(LISA_LONGLONG) $(LISA_SDCC))
 LISAOBJECTS = $(patsubst %.c,%.rel,$(LISA_FLOAT) $(LISA_INT) $(LISA_LONG) $(LISA_LONGLONG) $(LISA_SDCC))
 
-OBJ = setjmp.rel atomic_flag_test_and_set.rel heap.rel divu.rel divul.rel gptrget.rel bf16.rel bf16add.rel bf16c.rel
+# memcpy (with __memcpy), memset, strcpy and strlen are assembly: the pointer
+# stays in IX across the loop, the generic source walked by gptrget.s
+OBJ = setjmp.rel atomic_flag_test_and_set.rel heap.rel divu.rel divul.rel gptrget.rel bf16.rel bf16add.rel bf16c.rel \
+  memcpy.rel memset.rel strcpy.rel strlen.rel
 
 LIB = lisa.lib
 # --bf16-float: the float support routines on the bfloat16 unit, linked
@@ -126,14 +137,9 @@ else
   endif
 endif
 
-%.rel: %.s
-	@# TODO: sdas should place it\'s output in the current dir
-	test "`cd $(dir $<) && pwd`" = "`pwd`" || cp $< .
-	-$(AS) $(ASFLAGS) $(notdir $<)
-	test "`cd $(dir $<) && pwd`" = "`pwd`" || rm $(notdir $<)
 
 clean:
-	rm -f *.rel *.sym *.lst *~ $(CLEANSPEC) *.dump* *.asm *.lib
+	rm -f *.rel *.sym *.lst *~ $(CLEANSPEC) *.dump* *.asm *.lib lisamodel.inc
 
 distclean: clean
 	rm -f Makefile

@@ -456,6 +456,39 @@ under the option, which is where SDCC takes the library directory from.
 The hand-written .s keep their `cmp`s in both (a few words).  The corpus
 32693 to 32092 words.
 
+The string routines in assembly (2026-10-07): `memcpy` (with
+`__memcpy`), `memset`, `strcpy` and `strlen` are
+`device/lib/lisa/{memcpy,memset,strcpy,strlen}.s` (the Makefile's `.s`
+rule goes before incl.mk so that they win over `../memcpy.c` and
+`../strlen.c`; `_memset.c` is filtered out of COMMON_SDCC).  A first
+cut that walked the source with `__gptrnext` a byte at a time, as the C
+does, was no faster on the chip: it is fetch-bound at roughly 4.5 us
+per executed word (a 4-word line from the flash every four words and
+at every taken branch), and that loop executes as many words per byte
+as the compiler's.  So each tests the source's space once (`txau; btst
+7`) and runs one of two loops, RAM read in IX or the ldi/ret pairs
+called directly (`call ix`, RA saved once by the `sra`), the cursors
+swapped through IX with `ldxx` / `stxx` and bumped by `adx`, the count
+brought down in place by `dcx` (its low byte, then 256 per high byte,
+one more when the low byte's pass is partial; `dcx` sets Z).  `memset`
+keeps the fill byte in A (`dcx` leaves it) and the pointer in IX, 4
+words per byte.  `strlen` of RAM walks IX alone and subtracts s
+(`subax` / `subaxu`; every IX arithmetic sets ix_cond, and the caller
+stores IX with the tag as bit 15, so the result goes through `txau;
+andi #0x7f; taxu`); of code space it halves the words walked with
+`shr16` on the stack (tag masked and C cleared first, so neither amode
+shifts anything in).  A generated `lisamodel.inc` (TT07_CACHE, from
+the Makefile) gives the lisa-cache build its `cmp` before each `inx` /
+`dcx`; the older .s keep theirs in both.  On the chip (TIMER1, 23
+bytes x 32, ms): memset 41 to 7, memcpy from RAM 101 to 42, from code
+136 to 66, strcpy 77 to 42, strlen of RAM 77 to 5, of code 113 to 43.
+Sizes in words: memcpy 49 (54 under the cache), memset 16, strcpy 39,
+strlen 47; the second loop costs - the 22 checked sdcc_test programs
+plus the monitor went 47564 to 47710 words (test_strs +48, test_printf
++42, test_pfu and test_owl +26, test_regress +16, test_bigframe -12).
+test_strs 5-14: sources in code space and in RAM, empty strings, n ==
+0, the returns.
+
 Not done / next:
 * `__critical` is just eidi (no interrupt state to save: `ie` cannot be
   read).
