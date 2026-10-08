@@ -498,6 +498,19 @@ of memcpy (9 under the cache) and 5 of strcpy - the corpus 47710 to
 54 ms and strcpy 42 to 54, copies from code space unchanged (66 to
 67).  The two loops stay.
 
+strcmp in assembly (2026-10-07, `device/lib/lisa/strcmp.s`): both
+arguments are generic, so four loops, one per pair of spaces, the
+arguments themselves the cursors; with s2 in RAM *s1 is compared
+against it in place (`cmp 0(ix)`), with s2 in code space *s2 is read
+first into a pushed byte.  The TT07's `cmp` / `sub` subtract the
+carry-in too, so C is 0 going into each (`ldc` once, then the loop's
+`cpi #0`), and a 0 operand reports a borrow it did not make, so the
+sign of the result (the unsigned difference, in IX) is forced positive
+when *s2 is the NUL.  On the chip (23 bytes x 32, ms): RAM/RAM 175 to
+43, RAM/code and code/RAM 212 to 69, code/code 249 to 96; 102 words
+against the C's 40 (test_regress and test_pfu +62 each; the monitor
+does not link it).  test_strs 15-19.
+
 Not done / next:
 * `__critical` is just eidi (no interrupt state to save: `ie` cannot be
   read).

@@ -63,7 +63,6 @@ LISA_SDCC = $(filter-out _memset.c,$(COMMON_SDCC)) \
   __itoa.c \
   __ltoa.c \
   _startup.c \
-  _strcmp.c \
   _strncpy.c \
   _strcat.c \
   _strchr.c \
@@ -82,10 +81,10 @@ LISA_SDCC = $(filter-out _memset.c,$(COMMON_SDCC)) \
 LISASOURCES = $(addprefix ../,$(LISA_FLOAT) $(LISA_INT) $(LISA_LONG) $(LISA_LONGLONG) $(LISA_SDCC))
 LISAOBJECTS = $(patsubst %.c,%.rel,$(LISA_FLOAT) $(LISA_INT) $(LISA_LONG) $(LISA_LONGLONG) $(LISA_SDCC))
 
-# memcpy (with __memcpy), memset, strcpy and strlen are assembly: the pointer
-# stays in IX across the loop, the generic source walked by gptrget.s
+# memcpy (with __memcpy), memset, strcpy, strlen and strcmp are assembly: a
+# loop per space of the generic source, the pointers swapped through IX
 OBJ = setjmp.rel atomic_flag_test_and_set.rel heap.rel divu.rel divul.rel gptrget.rel bf16.rel bf16add.rel bf16c.rel \
-  memcpy.rel memset.rel strcpy.rel strlen.rel
+  memcpy.rel memset.rel strcpy.rel strlen.rel strcmp.rel
 
 LIB = lisa.lib
 # --bf16-float: the float support routines on the bfloat16 unit, linked

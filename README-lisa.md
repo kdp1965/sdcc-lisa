@@ -124,10 +124,10 @@ build/bin/sdcc -mlisa -o prog.ihx prog.c          # Intel HEX, byte addresses = 
   `__gptrprev`; `--opt-code-speed` puts the space test and the `call ix`
   loop inline instead (12 words for the first byte, but a few cycles
   faster per byte - string loops care).  `memcpy` (`__memcpy`), `memset`,
-  `strcpy` and `strlen` are assembly (`device/lib/lisa/{memcpy,memset,
-  strcpy,strlen}.s`): they test the source's space once and run either a
-  RAM loop or a `call ix` loop, the pointers swapped through IX with
-  `ldxx` / `stxx` (2-6 times the speed of the C on the chip).
+  `strcpy`, `strlen` and `strcmp` are assembly (`device/lib/lisa/{memcpy,
+  memset,strcpy,strlen,strcmp}.s`): they test each source's space once
+  and run a loop for it, RAM or `call ix`, the pointers swapped through
+  IX with `ldxx` / `stxx` (2-15 times the speed of the C on the chip).
 * The data cache (the 32K data space on a SPI RAM, `lisa_isa.md` "TT07
   silicon data cache note"): tested on the chip with the RP2040 of the
   demo board emulating the RAM (`mbell_micropython` branch
@@ -236,6 +236,6 @@ The smaller, chip-sized suite is `../sdcc_test` (`make check`); its
 | compiler back end | `src/lisa/{main.c,gen.c,ralloc.c,ralloc2.cc,peeph.def}` (`ralloc2.cc`: A for one-byte temporaries, tree-decomposition allocator with dry-run costs) |
 | assembler | `sdas/aslisa/{lisa.h,lisaadr.c,lisamch.c,lisapst.c}`, data-in-code expansion in `sdas/asxxsrc/asout.c`, `.p` suffix in `asmain.c` |
 | linker | `sdas/linksrc/lkrloc3.c` (LISA relocation rules), `lkarea.c` (code/data spaces, CDATA alignment, `s_<area>` symbols) |
-| library | `device/lib/lisa/{Makefile.in,setjmp.s,atomic_flag_test_and_set.s,heap.s,divu.s,divul.s,gptrget.s,memcpy.s,memset.s,strcpy.s,strlen.s,bf16.s,bf16add.s,bf16c.c,bf16fs.s,bf16fsc.c}`, `device/include/lisa/tt07.h` (peripherals, interrupts), `device/include/lisa/bf16.h` (the FPU), `device/include/stdarg.h`, `setjmp.h`, `stdatomic.h` |
+| library | `device/lib/lisa/{Makefile.in,setjmp.s,atomic_flag_test_and_set.s,heap.s,divu.s,divul.s,gptrget.s,memcpy.s,memset.s,strcpy.s,strlen.s,strcmp.s,bf16.s,bf16add.s,bf16c.c,bf16fs.s,bf16fsc.c}`, `device/include/lisa/tt07.h` (peripherals, interrupts), `device/include/lisa/bf16.h` (the FPU), `device/include/stdarg.h`, `setjmp.h`, `stdatomic.h` |
 | regression port | `support/regression/ports/lisa/{spec.mk,support.c}`, `fwk/include/testfwk.h` (`__SDCC_lisa`), LISA addresses in `tests/bitfields-*.c.in`, `tests/absolute.c.in` |
 | generic hooks | `src/SDCCglue.c` (program startup jumps, sfr table, FDATA), `src/SDCCsymt.c` (8-bit div/mod helpers return int; `__at` objects stay in data), `src/SDCCmem.c` (big objects to FDATA), `src/SDCCval.c` (code-pointer offset scaling), `src/port.h`, `src/SDCCmain.c`, `configure.ac`, `Makefile.in`, `device/lib/Makefile.in`, `device/lib/malloc.c` (lazy heap init) |
