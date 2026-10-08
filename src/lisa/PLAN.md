@@ -549,6 +549,37 @@ generic pointer, keep the plain add.  On the chip the counted `while (i
 monitor alone -46 (its `line[n]`), the test programs index through
 pointers and mostly do not change.  test_index.
 
+Shifts by a variable count (2026-10-07, genShift): the loops test the
+count once (`ldax; bz`, which also brings its line into the TT07 data
+cache) and count it down after each step - `dcx` sets Z, so `dcx; bnz`
+closes the loop - with the bit shifted in from C: 0, or the sign kept
+in the save shadow (`dcx` and the cache's `cmp` clobber C).  A byte
+stays in A throughout (`ldc #0; shl; dcx; bnz`, 4 words a bit, were 8);
+a word is `shl16` / `shr16` on {1(sp), A}, 4 words a bit (were 6); a
+long goes by whole bytes first - while 8 or more remain the bytes move
+up or down one (the sign filled in from the top byte) and the count
+loses 8 (`ldc #0; adc #0xf8`: the TT07 adc adds (k + C) & 0xff) - then
+by bits, the sign computed once (15 words a bit, were 20 for every
+bit).  `shl16` / `shr16` update neither C nor Z, so two cannot be
+chained for a long.  On the chip (x32): `ulong >> 20` 54 to 16 ms,
+`long >> 20` 55 to 18, `ulong << 9` 27 to 8, `uint >> 7` 11 to 5,
+`uchar << 7` 10 to 5; the corpus 48448 to 48482 (the byte loop is
+static code at each variable long-shift site: test_divl +18, test_divsh
++12).  test_vshift.  This is what the software float library's `mant
+>>= expd` and `l <<= exp` run.
+
+Two bugs the regression suite found the same day (`make test-lisa`,
+not run since the parameter in A and the copy homing went in; it is
+clean again, 32223 tests): a function with a frame past 511 bytes and
+its byte parameter in A homed that parameter at entry offset 0 - RA's
+low byte once sra has run - because lisaFarFrameLayout took only
+non-parameter objects from the frame, and a register parameter is
+allocated as a local (SDCC's bigstack; test_bigframe 7).  And copyHome
+let a temporary written later share a parameter's slot through an
+intermediate never-written copy of it without the parameter being dead:
+memmove's `d`, a copy of a copy of `dst`, was incremented in dst's slot
+and `return dst` read it (SDCC's memory suite; test_strs 20).
+
 Not done / next:
 * `__critical` is just eidi (no interrupt state to save: `ie` cannot be
   read).

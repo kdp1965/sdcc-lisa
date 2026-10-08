@@ -124,6 +124,12 @@ copyHome (symbol *sym)
       if (src->remat || !src->usl.spillLoc || src->liveTo > dic->seq)
         return NULL;
       symbol *home = src->usl.spillLoc;
+      /* the place is a parameter's slot (src a never-written copy of it):
+         a temporary written after this copy needs the parameter dead, as
+         below - memmove's d, a copy of a copy of dst, was incremented in
+         dst's slot and `return dst` read it */
+      if (home->_isparm && bitVectnBitsOn (sym->defs) != 1 && (bitVectnBitsOn (home->uses) != 1 || loopDepthOf (dic) != 0))
+        return NULL;
       lisaHome *h = isinSet (lisaSlocs, home) ? NULL : homeFor (home, false);
       set *temps = isinSet (lisaSlocs, home) ? home->usl.itmpStack : h ? h->temps : NULL;
       return noOverLap (temps, sym) ? home : NULL;
@@ -301,16 +307,19 @@ lisaFarFrameLayout (void)
   if (!currFunc || currFunc->stack <= 511)
     return;
 
+  /* the objects of the frame, as redoStackOffsets takes them: a register
+     parameter (the byte in A) is allocated as a local and lives here too
+     - left out, its home kept a stale offset (RA's low byte) */
   int n = 0;
   for (symbol *sym = setFirstItem (istack->syms); sym; sym = setNextItem (istack->syms))
-    if (!sym->_isparm && (IS_AGGREGATE (sym->type) || sym->allocreq))
+    if (!(sym->_isparm && !IS_REGPARM (sym->etype)) && (IS_AGGREGATE (sym->type) || sym->allocreq))
       n++;
   if (!n)
     return;
   symbol **syms = Safe_alloc (n * sizeof (symbol *));
   int i = 0;
   for (symbol *sym = setFirstItem (istack->syms); sym; sym = setNextItem (istack->syms))
-    if (!sym->_isparm && (IS_AGGREGATE (sym->type) || sym->allocreq))
+    if (!(sym->_isparm && !IS_REGPARM (sym->etype)) && (IS_AGGREGATE (sym->type) || sym->allocreq))
       syms[i++] = sym;
   qsort (syms, n, sizeof (symbol *), farLayoutCompare);
 

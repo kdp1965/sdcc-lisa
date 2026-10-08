@@ -3400,11 +3400,16 @@ genShift (const iCode *ic, bool left_shift)
     loadA (right->aop, 0);
     pushA ();
 
+    /* The loops test the count once (the ldax brings its line into the
+       TT07 data cache for the first dcx) and count it down after each
+       step - dcx sets Z - with the bit shifted in from C: 0, or the sign
+       kept in the save shadow (dcx and the cache's cmp clobber C). */
+
     /* 16 bits: the pair {1(sp), A} shifted by shl16 / shr16, the count
-       at 2(sp) counted down with dcx (C: it was 0 already).  The bit
-       shifted in is C: 0, or the sign kept in the save shadow */
+       at 2(sp) */
     if (size == 2 && left->aop->size == 2)
       {
+        symbol *tlbl_zero = regalloc_dry_run ? 0 : newiTempLabel (0);
         loadA (left->aop, 1);
         if (!left_shift && sign)
           {
@@ -3413,24 +3418,22 @@ genShift (const iCode *ic, bool left_shift)
             cost (1, 1);
           }
         pushA ();
+        emit2 ("ldax", "2(sp)");
+        cost (1, 1);
+        emitBranch ("bz", tlbl_zero);
         loadA (left->aop, 0);
-        if (lisa_tt07_cache)
-          {
-            emit2 ("cmp", "2(sp)");     /* the count's line into the cache before the dcx (TT07) */
-            cost (1, 1);
-          }
         emitLbl (tlbl);
-        emit2 ("dcx", "2(sp)");
-        emit2 ("if", "c");
-        cost (2, 3);
-        emitBranch ("br", tlbl_done);
         if (!left_shift && sign)
           emit2 ("restc", "");
         else
           emit2 ("ldc", "#0");
         emit2 (left_shift ? "shl16" : "shr16", "1(sp)");
-        cost (2, 3);
-        emitBranch ("br", tlbl);
+        emit2 ("dcx", "2(sp)");
+        cost (3, 5);
+        emitBranch ("bnz", tlbl);
+        emitBranch ("br", tlbl_done);
+        emitLbl (tlbl_zero);
+        loadA (left->aop, 0);
         emitLbl (tlbl_done);
         storeA (result->aop, 0);
         popA ();
@@ -3440,28 +3443,127 @@ genShift (const iCode *ic, bool left_shift)
       }
 
     genMove (result->aop, left->aop);
-    emitLbl (tlbl);
     emit2 ("ldax", "1(sp)");
     cost (1, 1);
     emitBranch ("bz", tlbl_done);
-    emit2 ("dcx", "1(sp)");
-    cost (1, 2);
-    if (left_shift)
+
+    /* a byte: in A throughout, dcx leaves it alone */
+    if (size == 1)
       {
-        if (size == 1)
+        loadA (result->aop, 0);
+        if (!left_shift && sign)
           {
-            loadA (result->aop, 0);
-            emit2 ("ldc", "#0");
-            emit2 ("shl", "");
-            cost (2, 2);
+            emitSignToC ();
+            emit2 ("savec", "");
+            cost (1, 1);
+          }
+        emitLbl (tlbl);
+        if (!left_shift && sign)
+          emit2 ("restc", "");
+        else
+          emit2 ("ldc", "#0");
+        emit2 (left_shift ? "shl" : "shr", "");
+        cost (2, 2);
+        if (lisa_tt07_cache)
+          {
+            emit2 ("cmp", "1(sp)");
+            cost (1, 1);
+          }
+        emit2 ("dcx", "1(sp)");
+        cost (1, 2);
+        emitBranch ("bnz", tlbl);
+        storeA (result->aop, 0);
+        emitLbl (tlbl_done);
+        adjustStack (1);
+        goto release;
+      }
+
+    /* a long: whole bytes first - while 8 or more remain the bytes move
+       up (down) one and the count loses 8 (adc #0xf8 with C = 0; the
+       TT07 adc adds (k + C) & 0xff) - then the bits that remain */
+    if (size >= 3)
+      {
+        symbol *tlbl_bytes = regalloc_dry_run ? 0 : newiTempLabel (0);
+        symbol *tlbl_bits = regalloc_dry_run ? 0 : newiTempLabel (0);
+        emitLbl (tlbl_bytes);
+        emit2 ("cpi", "#8");
+        emit2 ("if", "c");
+        cost (2, 2);
+        emitBranch ("br", tlbl_bits);
+        if (left_shift)
+          {
+            for (int i = size - 1; i >= 1; i--)
+              cheapMove (result->aop, i, result->aop, i - 1);
+            emit2 ("ldi", "#0x00");
+            cost (1, 1);
             storeA (result->aop, 0);
           }
         else
-          shiftLeft1 (result->aop, size);
+          {
+            for (int i = 0; i < size - 1; i++)
+              cheapMove (result->aop, i, result->aop, i + 1);
+            if (sign)
+              {
+                loadA (result->aop, size - 1);
+                emit2 ("shl", "");
+                emit2 ("ifte", "c");
+                emit2 ("ldi", "#0xff");
+                emit2 ("ldi", "#0x00");
+                cost (4, 4);
+              }
+            else
+              {
+                emit2 ("ldi", "#0x00");
+                cost (1, 1);
+              }
+            storeA (result->aop, size - 1);
+          }
+        emit2 ("ldax", "1(sp)");
+        emit2 ("ldc", "#0");
+        emit2 ("adc", "#0xf8");
+        emit2 ("stax", "1(sp)");
+        cost (4, 4);
+        emitBranch ("br", tlbl_bytes);
+        emitLbl (tlbl_bits);
+        emit2 ("cpi", "#0");
+        cost (1, 1);
+        emitBranch ("bz", tlbl_done);
       }
+
+    if (!left_shift && sign)
+      {
+        loadA (result->aop, size - 1);
+        emitSignToC ();
+        emit2 ("savec", "");
+        cost (1, 1);
+      }
+    emitLbl (tlbl);
+    if (left_shift)
+      shiftLeft1 (result->aop, size);
     else
-      shiftRight1 (result->aop, size, sign);
-    emitBranch ("br", tlbl);
+      for (int i = size - 1; i >= 0; i--)
+        {
+          loadA (result->aop, i);
+          if (i == size - 1)
+            {
+              if (sign)
+                emit2 ("restc", "");
+              else
+                emit2 ("ldc", "#0");
+              cost (1, 1);
+            }
+          emit2 ("shr", "");
+          cost (1, 1);
+          storeA (result->aop, i);
+        }
+    if (lisa_tt07_cache)
+      {
+        emit2 ("cmp", "1(sp)");
+        cost (1, 1);
+      }
+    emit2 ("dcx", "1(sp)");
+    cost (1, 2);
+    emitBranch ("bnz", tlbl);
     emitLbl (tlbl_done);
     adjustStack (1);
   }
