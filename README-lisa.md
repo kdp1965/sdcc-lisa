@@ -61,6 +61,12 @@ build/bin/sdcc -mlisa -o prog.ihx prog.c          # Intel HEX, byte addresses = 
   old all-on-the-stack convention (variadic functions use it too).
 * `printf` needs `int putchar(int c)` from the application (see
   `device/lib/lisa` tests in the project scratch area for an example).
+* `--debug` writes `prog.cdb` beside the `.ihx` (the code is unchanged):
+  the source lines behind the addresses, the functions, the globals and
+  the stack locals with their offsets from the entry SP, the struct
+  layouts.  `lisa_sim` loads it with the firmware and then has `break
+  file:line`, `list`, `next`, `into`, `finish`, `print`, `locals` and `bt`
+  (the reader is `lisa-tools/lisa_cdb`, meant for lisa_ide too).
 * Default stack: SP starts at 0x7f (`--stack-loc`), i.e. the 128-byte RAM
   of the TT07 board with the cache disabled; data starts at 0.
 * The library is a plain object list (`lisa.lib` + `.rel` files), because
