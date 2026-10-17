@@ -32,16 +32,19 @@ mkdir -p support/sdbinutils/libiberty && (cd support/sdbinutils/libiberty && \
 sed -i '' 's|^#define HAVE_PIPE2 1|/* #undef HAVE_PIPE2 */|' support/sdbinutils/libiberty/config.h
 make                                # serial: the gcc-based sdcpp configure races under -j
 # make the uninstalled compiler find its libraries and headers (lisa-cache is
-# the library compiled with --tt07-cache, which --tt07-cache programs link)
+# the library compiled with --tt07-cache, which --tt07-cache programs link,
+# lisa-rev2 the one compiled with --rev2)
 mkdir -p share/sdcc/lib && ln -sfn ../../../device/lib/build/lisa share/sdcc/lib/lisa
 ln -sfn ../../../device/lib/build/lisa-cache share/sdcc/lib/lisa-cache
+ln -sfn ../../../device/lib/build/lisa-rev2 share/sdcc/lib/lisa-rev2
 ln -sfn $PWD/../device/include share/sdcc/include
 ```
 
-Incremental rebuilds: `make -C src`, `make -C sdas/aslisa`,
-`make -C sdas/linksrc sdcc-ldlisa`, `make -C device/lib/lisa` and
-`make -C device/lib/lisa-cache` (the two libraries: after a compiler
-change, `make clean` in both first).
+Incremental rebuilds: `make -C src` (then `cp src/sdcc bin/sdcc`),
+`make -C sdas/aslisa`, `make -C sdas/linksrc sdcc-ldlisa`,
+`make -C device/lib/lisa`, `make -C device/lib/lisa-cache` and
+`make -C device/lib/lisa-rev2` (the three libraries: after a compiler
+change, `make clean` in each first).
 
 ## Using it
 
@@ -99,9 +102,9 @@ build/bin/sdcc -mlisa -o prog.ihx prog.c          # Intel HEX, byte addresses = 
 * The bfloat16 unit: `#include <lisa/bf16.h>` gives `bf16_t` (the bit
   pattern) with `bf16_mul`/`bf16_div`/`bf16_gt`/`bf16_eq`/`bf16_cmp`/
   `bf16_from_uint`/`bf16_to_uint` on the hardware, `bf16_add`/`bf16_sub`
-  in software (the silicon's adder is defective, see the BF16 notes in
-  `lisa_isa.md`), and `bf16_from_float`/`bf16_to_float` to and from the
-  32-bit `float`.  The C type `float` itself stays the software one -
+  in software (the TT07 silicon's adder is defective, see the BF16 notes
+  in `lisa_isa.md`; `--rev2` puts them on the second chip's adder, below),
+  and `bf16_from_float`/`bf16_to_float` to and from the 32-bit `float`.  The C type `float` itself stays the software one -
   unless compiled with `--bf16-float`: then `__fsadd`/`__fssub`/
   `__fsmul`/`__fsdiv` and the 8- and 16-bit integer conversions come from
   `device/lib/lisa/bf16fs.c` (linked ahead of `lisa.lib`; it defines
@@ -157,6 +160,21 @@ build/bin/sdcc -mlisa -o prog.ihx prog.c          # Intel HEX, byte addresses = 
   reaches the linker as `-X`, and `sdldlisa` refuses a layout beyond
   it).  Splitting data across the halves gains nothing: whatever is
   used in one half is unusable in the other.
+* `--rev2`: a program for the second chip (`ttsky26c-um-lisa-ttlc`, whose
+  `RESPIN.md` lists what its silicon fixes).  It links `lib/lisa-rev2`,
+  the library compiled with the option, in which `bf16_add` - and so
+  `bf16_sub` and `--bf16-float`'s `__fsadd`/`__fssub` - is the chip's
+  adder (`fadd`: correct there, nearest even, 15 instructions against the
+  software addition's few hundred; `device/lib/lisa/bf16add.s` under
+  `LISA_REV2` from `lisamodel.inc`), and it defines `__SDCC_LISA_REV2` for
+  the source.  The code the compiler itself generates is still the TT07
+  code: the rev-2 sequences (`ret #imm8` for the constants, the plain
+  `adc`/`sub`/`cmp`, the divider's result in RA) are to come.  `--rev2`
+  and `--tt07-cache` exclude each other (that layout is for the TT07
+  cache's bit-14 alias, which the second chip's cache does not have).
+  `lisa_sim` models the TT07 chip, so a `--rev2` program's additions are
+  only right on the second chip and its testbench
+  (`ttsky26c-um-lisa-ttlc/test`, `make IHX=<prog.ihx>`).
 * Code size: `gen.c` tracks what A holds and skips reloads, compares
   against 0 are sign-bit tests or `bnz` chains, and the peephole rules
   (`src/lisa/peeph.def`) thread branches and drop dead code; `--no-peep`

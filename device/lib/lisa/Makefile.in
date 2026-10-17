@@ -6,17 +6,19 @@ abs_top_builddir = @abs_top_builddir@
 # sdar (sdbinutils) may be unavailable: use the plain list-of-objects library format
 LIB_TYPE     = LIST
 
-# This Makefile.in builds two libraries: configure writes it as
-# device/lib/lisa/Makefile (lisa.lib for the direct RAM) and as
+# This Makefile.in builds three libraries: configure writes it as
+# device/lib/lisa/Makefile (lisa.lib for the direct RAM of TT07), as
 # device/lib/lisa-cache/Makefile (the same compiled with --tt07-cache,
-# which the compiler links for --tt07-cache programs: get_model); the
-# directory name tells which.  The sources are all in device/lib/lisa.
+# which the compiler links for --tt07-cache programs: get_model) and as
+# device/lib/lisa-rev2/Makefile (compiled with --rev2 for the second chip:
+# bf16_add on its hardware adder); the directory name tells which.  The
+# sources are all in device/lib/lisa.
 MODEL = $(notdir $(CURDIR))
 LISASRC = $(srcdir)/../lisa
 vpath %.s $(LISASRC)
 vpath %.c $(LISASRC)
 
-EXTRA_CFLAGS = -mlisa $(if $(filter lisa-cache,$(MODEL)),--tt07-cache)
+EXTRA_CFLAGS = -mlisa $(if $(filter lisa-cache,$(MODEL)),--tt07-cache) $(if $(filter lisa-rev2,$(MODEL)),--rev2)
 
 SAS = $(top_builddir)/bin/sdaslisa
 
@@ -25,10 +27,8 @@ override PORTDIR = ../build/$(MODEL)
 # the .s sources first: memcpy.s / strlen.s stand in for ../memcpy.c /
 # ../strlen.c, which the .c rules of incl.mk would otherwise pick.  They
 # .include lisamodel.inc, which says whether this is the --tt07-cache
-# library (TT07_CACHE: the cmp before each inx / dcx)
-lisamodel.inc: Makefile
-	echo "TT07_CACHE = $(if $(filter lisa-cache,$(MODEL)),1,0)" > $@
-
+# library (TT07_CACHE: the cmp before each inx / dcx) or the --rev2 one
+# (LISA_REV2: bf16_add is the hardware adder); the rule is below all:
 %.rel: %.s lisamodel.inc
 	@# TODO: sdas should place it\'s output in the current dir
 	test "`cd $(dir $<) && pwd`" = "`pwd`" || cp $< .
@@ -97,6 +97,11 @@ ASFLAGS = -plosgff
 CFLAGS = -I$(srcdir)/../../include -I. --std-c23
 
 all: $(PORTDIR)/$(LIB) $(PORTDIR)/$(LIB2)
+
+# (below all: make's default goal is the first rule's target)
+lisamodel.inc: Makefile
+	echo "TT07_CACHE = $(if $(filter lisa-cache,$(MODEL)),1,0)" > $@
+	echo "LISA_REV2 = $(if $(filter lisa-rev2,$(MODEL)),1,0)" >> $@
 
 $(PORTDIR)/$(LIB2): $(OBJ2) Makefile
 ifeq ($(LIB_TYPE), SDCCLIB)

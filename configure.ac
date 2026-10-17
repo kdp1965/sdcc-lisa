@@ -979,7 +979,8 @@ if test $OPT_DISABLE_LISA = 0; then
   AC_CONFIG_FILES([src/lisa/Makefile
                    sdas/aslisa/Makefile])
   test $OPT_DISABLE_DEVICE_LIB = 0 && AC_CONFIG_FILES([device/lib/lisa/Makefile
-                                                       device/lib/lisa-cache/Makefile:device/lib/lisa/Makefile.in])
+                                                       device/lib/lisa-cache/Makefile:device/lib/lisa/Makefile.in
+                                                       device/lib/lisa-rev2/Makefile:device/lib/lisa/Makefile.in])
 fi
 
 test $OPT_DISABLE_DEVICE_LIB = 0 && AC_CONFIG_FILES([device/lib/Makefile])

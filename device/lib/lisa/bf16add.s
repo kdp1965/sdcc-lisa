@@ -1,6 +1,8 @@
 ;--------------------------------------------------------------------------
-;  bf16add.s - bf16_t bf16_add(bf16_t a, bf16_t b) in software, for the
-;  LISA port (the core's adder is defective; device/include/lisa/bf16.h)
+;  bf16add.s - bf16_t bf16_add(bf16_t a, bf16_t b) for the LISA port: in
+;  software for the TT07 chip, whose adder is defective (device/include/
+;  lisa/bf16.h), on the hardware adder in the --rev2 library (lisamodel.inc
+;  from device/lib/lisa/Makefile.in says which this is)
 ;
 ;  Copyright (C) 2026
 ;
@@ -26,6 +28,33 @@
 ;  not however invalidate any other reasons why the executable file
 ;  might be covered by the GNU General Public License.
 ;--------------------------------------------------------------------------
+
+	.include "lisamodel.inc"
+
+.if LISA_REV2
+; The second chip's adder rounds to nearest even (amode[2] clear) and
+; keeps the subnormals.  facc <- b, f0 <- a, facc <- facc + f0, IX <- facc:
+; a leaf, a at 1(sp),2(sp) and b at 3(sp),4(sp), as bf16.s's other calls.
+	.area CODE (CODE)
+
+	.globl _bf16_add
+_bf16_add:
+	ldax	1(sp)
+	taf	0
+	ldax	2(sp)
+	taf	1
+	fswap	f0
+	ldax	3(sp)
+	taf	0
+	ldax	4(sp)
+	taf	1
+	fadd	f0
+	tfa	0
+	tax
+	tfa	1
+	taxu
+	ret
+.else
 ;
 ; The usual algorithm, round to nearest even, denormals as zero, the
 ; result flushed to zero below the normal range.  The significand of the
@@ -352,3 +381,4 @@ ret_a:
 	ldxx	9(sp)			; the result comes back in IX
 	ads	#10
 	ret
+.endif

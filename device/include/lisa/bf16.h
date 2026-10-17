@@ -23,8 +23,11 @@
    rounding carries out of the fraction it returns half the value - so
    bf16_add / bf16_sub are done in software here (round to nearest even,
    denormals as zero), and bf16_fadd_raw is the hardware as it is.  The
-   integer conversions are unsigned in the hardware (amode[1] stays 0);
-   the signed ones here handle the sign around them.
+   second chip (ttsky26c-um-lisa-ttlc, its RESPIN.md) has a correct adder,
+   rounding to nearest even: compiled with --rev2, bf16_add is that adder
+   (the lib/lisa-rev2 library).  The integer conversions are unsigned in
+   the hardware (amode[1] stays 0); the signed ones here handle the sign
+   around them.
 
    Copyright (C) 2026
 
@@ -72,7 +75,7 @@ typedef unsigned short bf16_t;
 #define BF16_NAN        0x7fc0u
 
 /* ---- arithmetic ------------------------------------------------------ */
-bf16_t bf16_add(bf16_t a, bf16_t b);                /* software, round to nearest even */
+bf16_t bf16_add(bf16_t a, bf16_t b);                /* software, round to nearest even (--rev2: the hardware adder) */
 #define bf16_sub(a, b) bf16_add((a), bf16_neg(b))
 bf16_t bf16_mul(bf16_t a, bf16_t b);                /* hardware, truncates */
 bf16_t bf16_div(bf16_t a, bf16_t b);                /* hardware, nearest */

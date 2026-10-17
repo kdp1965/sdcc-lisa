@@ -305,17 +305,30 @@ lisa_reg_parm (sym_link *l, bool reentrant)
    data RAM size (-X) and refuses a layout beyond it. */
 #define OPTION_TT07_CACHE "--tt07-cache"
 
+/* --rev2: a program for the second LISA chip (ttsky26c-um-lisa-ttlc, its
+   RESPIN.md lists what its silicon fixes).  It links lib/lisa-rev2, the
+   library compiled with --rev2, in which bf16_add is the hardware adder
+   (the TT07 adder is defective, so the lisa library adds in software), and
+   defines __SDCC_LISA_REV2 for the source.  The code the compiler itself
+   generates is still the TT07 code: the rev-2 sequences (ret #imm8 for the
+   constants, the plain adc/sub/cmp, the divider's result in RA) are to
+   come.  --tt07-cache is the TT07 cache's layout and workarounds, which
+   the rev-2 cache does not need: the two exclude each other. */
+#define OPTION_REV2 "--rev2"
+
 #define OPTION_STACK_SIZE "--stack-size"
 
 static OPTION lisa_options[] = {
   {0, OPTION_BF16_FLOAT, NULL, "float arithmetic on the bfloat16 unit (8-bit mantissa, see README-lisa.md)"},
   {0, OPTION_TT07_CACHE, NULL, "data in the 32K SRAM behind the TT07 data cache: stack at 0x7fff, data limited to 16K minus --stack-size"},
   {0, OPTION_STACK_SIZE, NULL, "<nnnn> bytes reserved for the stack (--tt07-cache: 2K unless given)"},
+  {0, OPTION_REV2, NULL, "code for the second chip (ttsky26c): bf16_add on its hardware adder (lib/lisa-rev2), __SDCC_LISA_REV2 defined"},
   {0, NULL}
 };
 
 static bool lisa_bf16_float = false;
 bool lisa_tt07_cache = false;
+bool lisa_rev2 = false;
 
 static bool
 lisa_parseOptions (int *pargc, char **argv, int *i)
@@ -328,6 +341,11 @@ lisa_parseOptions (int *pargc, char **argv, int *i)
   if (!strcmp (argv[*i], OPTION_TT07_CACHE))
     {
       lisa_tt07_cache = true;
+      return TRUE;
+    }
+  if (!strcmp (argv[*i], OPTION_REV2))
+    {
+      lisa_rev2 = true;
       return TRUE;
     }
   if (!strncmp (argv[*i], OPTION_STACK_SIZE, strlen (OPTION_STACK_SIZE)))
@@ -350,6 +368,13 @@ lisa_finaliseOptions (void)
 {
   port->mem.default_local_map = data;
   port->mem.default_globl_map = data;
+  if (lisa_rev2 && lisa_tt07_cache)
+    {
+      fprintf (stderr, "--rev2 and --tt07-cache exclude each other: the second chip's cache has no bit-14 alias to lay out for\n");
+      exit (EXIT_FAILURE);
+    }
+  if (lisa_rev2)
+    addSet (&preArgvSet, Safe_strdup ("-D__SDCC_LISA_REV2"));
   if (lisa_tt07_cache)
     {
       if (options.stack_loc < 0)
@@ -502,12 +527,13 @@ hasExtBitOp (int op, sym_link *left, int right)
 }
 
 /* The library directory: lib/lisa-cache holds the library compiled with
-   --tt07-cache (the read-modify-write workaround in its C), lib/lisa the
-   one for the direct RAM. */
+   --tt07-cache (the read-modify-write workaround in its C), lib/lisa-rev2
+   the one compiled with --rev2 (bf16_add on the hardware adder), lib/lisa
+   the one for the direct RAM of TT07. */
 static const char *
 get_model (void)
 {
-  return lisa_tt07_cache ? "lisa-cache" : "lisa";
+  return lisa_rev2 ? "lisa-rev2" : lisa_tt07_cache ? "lisa-cache" : "lisa";
 }
 
 /** $1 is always the basename.

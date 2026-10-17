@@ -22,8 +22,9 @@ with the stack handling of the stm8/z80 ports.
 * `ret #imm8` is broken on TT07 (A gets the low byte of the instruction at the
   return address), so a byte of constant data in code space costs two words:
   `ldi #v ; ret`, read with `call ix` (IX post-increments) followed by `adx 1`.
-  A fixed core could use `ret #imm8` and stride 1; that is a compile-time option
-  (`--reti`) for later, everything below assumes stride 2.
+  A fixed core could use `ret #imm8` and stride 1; that goes under `--rev2`
+  (the option for the second chip: so far it selects the library whose
+  `bf16_add` is the hardware adder), everything below assumes stride 2.
 * `add`/`sub` always include the carry (`A+M+C`, `A-M-C`); `ldi` clears C, loads and
   stores leave it alone.  `cmp`/`cpi` set Z and C (C = borrow).  Signed ordering
   needs `amode[1]=1` during the compare and `if` with the `s` bit.
@@ -602,4 +603,6 @@ a byte went from 17 words to 3.  test_rot.
   (`test_irqhaz.c` shows it on the chip), so compiled code must run with
   interrupts off there (README-lisa.md "Interrupts on TT07").
   `device/include/lisa/tt07.h` declares the peripherals.
-* A `--reti` option for a fixed core (1 word per constant byte).
+* Under `--rev2` (the option exists: lib/lisa-rev2, bf16_add on the hardware
+  adder): `ret #imm8` constants (1 word per constant byte), the plain
+  `adc`/`sub`/`cmp` with the real carry, the divider's 16-bit result in RA.
