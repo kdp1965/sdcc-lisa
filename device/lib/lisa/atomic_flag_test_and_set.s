@@ -28,13 +28,20 @@
 ;
 ; _Bool atomic_flag_test_and_set(volatile atomic_flag *object)
 ; The flag byte is 1 when clear (ATOMIC_FLAG_INIT) and 0 when set; swap is
-; the atomic exchange.  The pointer is at 1(sp),2(sp); the result is in A.
+; the atomic exchange.  The pointer is at T(sp),T+1(sp); the result is in A.
+
+;
+; Stack offsets: T(sp) is the byte on top of the stack, T+n(sp) the nth
+; below it; T comes from lisamodel.inc (1 on TT07, where a push writes at
+; SP and then decrements it, 0 on the second chip, where it decrements
+; first: sdcc --rev2, the lisa-rev2 library).
+	.include "lisamodel.inc"
 
 	.area CODE (CODE)
 
 	.globl _atomic_flag_test_and_set
 _atomic_flag_test_and_set:
-	ldxx	1(sp)
+	ldxx	T(sp)
 	ldi	#0x00
 	swap	0(ix)			; A = old flag, flag = 0 (set)
 	cpi	#0x00

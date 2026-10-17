@@ -604,5 +604,7 @@ a byte went from 17 words to 3.  test_rot.
   interrupts off there (README-lisa.md "Interrupts on TT07").
   `device/include/lisa/tt07.h` declares the peripherals.
 * Under `--rev2` (the option exists: lib/lisa-rev2, bf16_add on the hardware
-  adder): `ret #imm8` constants (1 word per constant byte), the plain
+  adder, and since 2026-10-17 the chip's stack convention - the top of the
+  stack at 0(sp), `spTop ()` in gen.c, `T` in the library's .s): still to do
+  are `ret #imm8` constants (1 word per constant byte), the plain
   `adc`/`sub`/`cmp` with the real carry, the divider's 16-bit result in RA.

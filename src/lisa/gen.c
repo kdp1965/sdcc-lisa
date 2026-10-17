@@ -77,6 +77,7 @@ static struct genState
 }
 G;
 
+static int spTop (void);
 static void adjustStack (int n);
 static void ixLoadValue (const asmop *aop);
 static unsigned char litByte (const asmop *aop, int offset);
@@ -162,7 +163,7 @@ aTrack (const char *inst, const char *opnd, bool pred)
     }
   /* a remembered stack byte that has been dropped (at or below SP) may be
      overwritten by a push with something else */
-  if (G.a.kind == A_STK && G.a.stk + G.stack.pushed <= 0)
+  if (G.a.kind == A_STK && G.a.stk + G.stack.pushed < spTop ())
     aInvalidate ();
   /* what writes A */
   if (!strcmp (inst, "ldax") || !strcmp (inst, "lda") || !strcmp (inst, "ldi") ||
@@ -421,6 +422,15 @@ aopIsLitVal (const asmop *aop, int offset, int size, unsigned long long int val)
 }
 
 /* Stack offset of a byte as the instruction wants it: relative to the current SP. */
+/* The byte on top of the stack: 1(sp) on TT07 (a push writes at SP and
+   then decrements it), 0(sp) on the second chip (--rev2: it decrements
+   first).  Every frame offset is counted from it. */
+static int
+spTop (void)
+{
+  return lisa_rev2 ? 0 : 1;
+}
+
 static int
 stkOffset (const asmop *aop, int offset)
 {
@@ -648,7 +658,7 @@ aopForSym (const iCode *ic, symbol *sym)
       aop = newAsmop (AOP_STK);
       aop->vol = IS_VOLATILE (sym->type) || IS_VOLATILE (sym->etype);
       aop->size = getSize (sym->type);
-      int base = sym->stack >= 0 ? sym->stack + G.stack.param_offset : sym->stack + 1 + G.stack.locals_base;
+      int base = sym->stack >= 0 ? sym->stack + G.stack.param_offset : sym->stack + spTop () + G.stack.locals_base;
       for (int offset = 0; offset < aop->size && offset < 8; offset++)
         aop->aopu.bytes[offset].byteu.stk = base + offset;
     }
@@ -730,7 +740,7 @@ aopForRemat (symbol *sym)
     {
       aop = newAsmop (AOP_STL);
       symbol *ssym = OP_SYMBOL (IC_LEFT (ic));
-      aop->aopu.stk_off = (ssym->stack >= 0 ? ssym->stack + G.stack.param_offset : ssym->stack + 1 + G.stack.locals_base) + val;
+      aop->aopu.stk_off = (ssym->stack >= 0 ? ssym->stack + G.stack.param_offset : ssym->stack + spTop () + G.stack.locals_base) + val;
     }
   else
     {
@@ -768,7 +778,7 @@ aopForRetSlot (const symbol *sym)
   asmop *aop = newAsmop (AOP_STK);
   aop->size = G.stack.ret_size;
   for (int i = 0; i < aop->size && i < 8; i++)
-    aop->aopu.bytes[i].byteu.stk = 1 + i;
+    aop->aopu.bytes[i].byteu.stk = spTop () + i;
   return (aop);
 }
 
@@ -866,7 +876,7 @@ aopOp (operand *op, const iCode *ic)
             for (int j = 0; j < aop->size && j < 8; j++)
               {
                 aop->aopu.bytes[j].in_reg = false;
-                aop->aopu.bytes[j].byteu.stk = 1 + j;
+                aop->aopu.bytes[j].byteu.stk = spTop () + j;
               }
             return;
           }
@@ -946,7 +956,7 @@ aHolds (const asmop *aop, int offset)
      be skipped), not a volatile object or a peripheral register */
   if (regalloc_dry_run || predicated > 0 || aop->vol || G.a.kind == A_UNKNOWN)
     return (false);
-  if (G.a.kind == A_STK && G.a.stk + G.stack.pushed <= 0)
+  if (G.a.kind == A_STK && G.a.stk + G.stack.pushed < spTop ())
     return (false);
   if (offset >= aop->size && aop->type != AOP_STL && aop->type != AOP_LIT)
     return (G.a.kind == A_LIT && !strcmp (G.a.text, "#0x00"));
@@ -1191,7 +1201,7 @@ emitAluA (const char *op, const asmop *aop, int offset)
           emit2 ("push", "a");
           G.stack.pushed++;
           emit2 ("ldi", "%s", imm);
-          emit2 (op, "1(sp)");
+          emit2 (op, "%d(sp)", spTop ());
           cost (3, 3);
           adjustStack (1);
         }
@@ -1210,15 +1220,15 @@ emitAluA (const char *op, const asmop *aop, int offset)
   loadA (aop, offset);
   if (aluCommutative (op))
     {
-      emit2 (op, "1(sp)");
+      emit2 (op, "%d(sp)", spTop ());
       cost (1, 1);
       adjustStack (1);
       return;
     }
   emit2 ("push", "a");
   G.stack.pushed++;
-  emit2 ("ldax", "2(sp)");
-  emit2 (op, "1(sp)");
+  emit2 ("ldax", "%d(sp)", spTop () + 1);
+  emit2 (op, "%d(sp)", spTop ());
   cost (3, 3);
   adjustStack (2);
 }
@@ -1421,7 +1431,7 @@ setupFrame (const iCode *ic)
   G.stack.size = sym->stack;
   G.stack.ret_ix = lisaRetInIX (ftype);
   G.stack.ret_size = (retsize > 1 || IS_STRUCT (ftype->next)) && !G.stack.ret_ix ? retsize : 0;
-  G.stack.param_offset = 1 + G.stack.ret_size;
+  G.stack.param_offset = spTop () + G.stack.ret_size;
   G.stack.locals_base = 0;
   G.ra_saved = false;
   ixInvalidate ();
@@ -1589,7 +1599,7 @@ genReturn (const iCode *ic)
           slot.type = AOP_STK;
           slot.size = G.stack.ret_size;
           for (int i = 0; i < slot.size && i < 8; i++)
-            slot.aopu.bytes[i].byteu.stk = 1 + i;
+            slot.aopu.bytes[i].byteu.stk = spTop () + i;
           /* bytes beyond the 8 tracked ones are addressed from byte 0; a
              temporary that aopForRetSlot put in the slot is there already */
           for (int i = 0; i < G.stack.ret_size; i++)
@@ -1869,7 +1879,7 @@ genCall (const iCode *ic)
           slot.type = AOP_STK;
           slot.size = retsize;
           for (int i = 0; i < retsize && i < 8; i++)
-            slot.aopu.bytes[i].byteu.stk = 1 - G.stack.pushed + i;   /* 1(sp) .. */
+            slot.aopu.bytes[i].byteu.stk = spTop () - G.stack.pushed + i;   /* the top of the stack .. */
           /* a narrower result (the division support calls): only its bytes.
              High byte first, so that A ends up holding byte 0 for whatever
              uses the result next (the A tracker) */
@@ -2137,7 +2147,7 @@ genAddSub (const iCode *ic, bool sub)
       immd_tmp.type = AOP_STK;
       immd_tmp.size = n;
       for (int i = 0; i < n; i++)
-        immd_tmp.aopu.bytes[i].byteu.stk = 1 + i - G.stack.pushed;
+        immd_tmp.aopu.bytes[i].byteu.stk = spTop () + i - G.stack.pushed;
       raop = &immd_tmp;
       immd_pushed = n;
     }
@@ -2389,7 +2399,7 @@ genUminus (const iCode *ic)
       /* A ^ 0x80 through the stack: xor has no immediate form */
       emit2 ("push", "a");
       emit2 ("ldi", "#0x80");
-      emit2 ("xor", "1(sp)");
+      emit2 ("xor", "%d(sp)", spTop ());
       emit2 ("ads", "#1");
       cost (4, 4);
       storeA (result->aop, size - 1);
@@ -2522,7 +2532,7 @@ genBitwise (const iCode *ic, const char *op, iCode *ifx)
           emitAluA ("and", raop, i);
           if (!first)
             {
-              emit2 ("or", "1(sp)");
+              emit2 ("or", "%d(sp)", spTop ());
               cost (1, 1);
               adjustStack (1);
             }
@@ -2681,7 +2691,7 @@ cmpByteFlags (const asmop *laop, const asmop *raop, int i, bool sign)
       cost (1, 1);
       loadA (laop, i);
       emit2 ("ifte", "nc");
-      emit2 ("cmp", "1(sp)");
+      emit2 ("cmp", "%d(sp)", spTop ());
       emit2 ("ldc", "#0");
       cost (3, 3);
       adjustStack (1);
@@ -3312,7 +3322,7 @@ genShift (const iCode *ic, bool left_shift)
               if (inplace)
                 SNPRINTF (hi, sizeof (hi), "%d", stkOffset (result->aop, 1));
               else
-                strcpy (hi, "1");
+                SNPRINTF (hi, sizeof (hi), "%d", spTop ());
               if (!inplace)
                 {
                   loadA (left->aop, 1);
@@ -3418,7 +3428,7 @@ genShift (const iCode *ic, bool left_shift)
             cost (1, 1);
           }
         pushA ();
-        emit2 ("ldax", "2(sp)");
+        emit2 ("ldax", "%d(sp)", spTop () + 1);
         cost (1, 1);
         emitBranch ("bz", tlbl_zero);
         loadA (left->aop, 0);
@@ -3427,8 +3437,8 @@ genShift (const iCode *ic, bool left_shift)
           emit2 ("restc", "");
         else
           emit2 ("ldc", "#0");
-        emit2 (left_shift ? "shl16" : "shr16", "1(sp)");
-        emit2 ("dcx", "2(sp)");
+        emit2 (left_shift ? "shl16" : "shr16", "%d(sp)", spTop ());
+        emit2 ("dcx", "%d(sp)", spTop () + 1);
         cost (3, 5);
         emitBranch ("bnz", tlbl);
         emitBranch ("br", tlbl_done);
@@ -3443,7 +3453,7 @@ genShift (const iCode *ic, bool left_shift)
       }
 
     genMove (result->aop, left->aop);
-    emit2 ("ldax", "1(sp)");
+    emit2 ("ldax", "%d(sp)", spTop ());
     cost (1, 1);
     emitBranch ("bz", tlbl_done);
 
@@ -3466,10 +3476,10 @@ genShift (const iCode *ic, bool left_shift)
         cost (2, 2);
         if (lisa_tt07_cache)
           {
-            emit2 ("cmp", "1(sp)");
+            emit2 ("cmp", "%d(sp)", spTop ());
             cost (1, 1);
           }
-        emit2 ("dcx", "1(sp)");
+        emit2 ("dcx", "%d(sp)", spTop ());
         cost (1, 2);
         emitBranch ("bnz", tlbl);
         storeA (result->aop, 0);
@@ -3518,10 +3528,10 @@ genShift (const iCode *ic, bool left_shift)
               }
             storeA (result->aop, size - 1);
           }
-        emit2 ("ldax", "1(sp)");
+        emit2 ("ldax", "%d(sp)", spTop ());
         emit2 ("ldc", "#0");
         emit2 ("adc", "#0xf8");
-        emit2 ("stax", "1(sp)");
+        emit2 ("stax", "%d(sp)", spTop ());
         cost (4, 4);
         emitBranch ("br", tlbl_bytes);
         emitLbl (tlbl_bits);
@@ -3558,10 +3568,10 @@ genShift (const iCode *ic, bool left_shift)
         }
     if (lisa_tt07_cache)
       {
-        emit2 ("cmp", "1(sp)");
+        emit2 ("cmp", "%d(sp)", spTop ());
         cost (1, 1);
       }
-    emit2 ("dcx", "1(sp)");
+    emit2 ("dcx", "%d(sp)", spTop ());
     cost (1, 2);
     emitBranch ("bnz", tlbl);
     emitLbl (tlbl_done);
@@ -3638,7 +3648,7 @@ genMult (const iCode *ic)
           memset (&rtmp, 0, sizeof (rtmp));
           rtmp.type = AOP_STK;
           rtmp.size = 1;
-          rtmp.aopu.bytes[0].byteu.stk = 1 - G.stack.pushed;
+          rtmp.aopu.bytes[0].byteu.stk = spTop () - G.stack.pushed;
           raop = &rtmp;
           rpushed = 1;
         }
@@ -3656,25 +3666,25 @@ genMult (const iCode *ic)
           emit2 ("btst", "7");
           cost (1, 1);
           emitBranch ("bnz", tlbl_a);                /* Z = bit 7 */
-          emit2 ("ldax", "1(sp)");
+          emit2 ("ldax", "%d(sp)", spTop ());
           /* a literal is subtracted as adc #~k with C = 1 (no borrow in),
              memory with the hardware sub and C = 0; the value is right
              whatever C ends up as */
           emit2 ("ldc", (raop->type == AOP_LIT) ? "#1" : "#0");
           cost (2, 2);
           emitAluA ("sub", raop, 0);
-          emit2 ("stax", "1(sp)");
+          emit2 ("stax", "%d(sp)", spTop ());
           cost (1, 1);
           emitLbl (tlbl_a);
           loadA (raop, 0);
           emit2 ("btst", "7");
           cost (1, 1);
           emitBranch ("bnz", tlbl_b);
-          emit2 ("ldax", "1(sp)");
+          emit2 ("ldax", "%d(sp)", spTop ());
           emit2 ("ldc", (laop->type == AOP_LIT) ? "#1" : "#0");
           cost (2, 2);
           emitAluA ("sub", laop, 0);
-          emit2 ("stax", "1(sp)");
+          emit2 ("stax", "%d(sp)", spTop ());
           cost (1, 1);
           emitLbl (tlbl_b);
           popA ();
@@ -3708,8 +3718,8 @@ genMult (const iCode *ic)
           memset (&tmp, 0, sizeof (tmp));
           tmp.type = AOP_STK;
           tmp.size = 2;
-          tmp.aopu.bytes[0].byteu.stk = 1 - G.stack.pushed;
-          tmp.aopu.bytes[1].byteu.stk = 2 - G.stack.pushed;
+          tmp.aopu.bytes[0].byteu.stk = spTop () - G.stack.pushed;
+          tmp.aopu.bytes[1].byteu.stk = spTop () + 1 - G.stack.pushed;
           raop = &tmp;
           loadA (laop, 0);
           emitAluA ("mulu", raop, 0);
@@ -3717,14 +3727,14 @@ genMult (const iCode *ic)
           loadA (laop, 0);
           emitAluA ("mul", raop, 1);
           emit2 ("ldc", "#0");
-          emit2 ("add", "1(sp)");
-          emit2 ("stax", "1(sp)");
+          emit2 ("add", "%d(sp)", spTop ());
+          emit2 ("stax", "%d(sp)", spTop ());
           cost (3, 3);
           loadA (laop, 1);
           emitAluA ("mul", raop, 0);
           emit2 ("ldc", "#0");
-          emit2 ("add", "1(sp)");
-          emit2 ("stax", "1(sp)");
+          emit2 ("add", "%d(sp)", spTop ());
+          emit2 ("stax", "%d(sp)", spTop ());
           cost (3, 3);
           loadA (laop, 0);
           emitAluA ("mul", raop, 0);
@@ -3746,8 +3756,8 @@ genMult (const iCode *ic)
               loadA (laop, 0);
               emitAluA ("mul", raop, 1);
               emit2 ("ldc", "#0");
-              emit2 ("add", "1(sp)");
-              emit2 ("stax", "1(sp)");
+              emit2 ("add", "%d(sp)", spTop ());
+              emit2 ("stax", "%d(sp)", spTop ());
               cost (3, 3);
             }
           if (laop->size > 1)
@@ -3755,8 +3765,8 @@ genMult (const iCode *ic)
               loadA (laop, 1);
               emitAluA ("mul", raop, 0);
               emit2 ("ldc", "#0");
-              emit2 ("add", "1(sp)");
-              emit2 ("stax", "1(sp)");
+              emit2 ("add", "%d(sp)", spTop ());
+              emit2 ("stax", "%d(sp)", spTop ());
               cost (3, 3);
             }
           loadA (laop, 0);
@@ -3844,7 +3854,7 @@ genDivMod (const iCode *ic)
           pushA ();
           loadA (raop, 0);
           pushA ();
-          emit2 ("ldax", "2(sp)");
+          emit2 ("ldax", "%d(sp)", spTop () + 1);
           cost (1, 1);
           pushed = 2;
         }
@@ -3875,7 +3885,7 @@ genDivMod (const iCode *ic)
           memset (&tmp, 0, sizeof (tmp));
           tmp.type = AOP_STK;
           tmp.size = 1;
-          tmp.aopu.bytes[0].byteu.stk = 1 - G.stack.pushed;
+          tmp.aopu.bytes[0].byteu.stk = spTop () - G.stack.pushed;
           laop = &tmp;
           pushed++;
         }
@@ -3888,7 +3898,7 @@ genDivMod (const iCode *ic)
           pushA ();
         }
       for (int i = 0; i < rsize; i++)
-        rt->aopu.bytes[i].byteu.stk = 1 + i - G.stack.pushed;
+        rt->aopu.bytes[i].byteu.stk = spTop () + i - G.stack.pushed;
       raop = rt;
       pushed += rsize;
     }
@@ -3913,7 +3923,7 @@ genDivMod (const iCode *ic)
       loadA (laop, 1);
       pushA ();
       loadA (laop, 0);
-      emit2 ("lddiv", "1(sp)");
+      emit2 ("lddiv", "%d(sp)", spTop ());
       cost (2, 2);
       adjustStack (1);
     }
@@ -3940,7 +3950,7 @@ genDivMod (const iCode *ic)
       pushA ();
       pushA ();
       loadA (raop, 0);
-      emit2 (op, "%d, 2(sp)", dv);
+      emit2 (op, "%d, %d(sp)", dv, spTop () + 1);
       cost (2, 2);
       adjustStack (2);
     }
@@ -4672,7 +4682,7 @@ genPointerSetBitField (operand *left, operand *right, int size, int blen, int bs
               cost (1, 1);
             }
           emit2 ("andi", "#0x%02x", ~mask & 0xff);
-          emit2 ("or", "1(sp)");
+          emit2 ("or", "%d(sp)", spTop ());
           cost (2, 2);
           adjustStack (1);
         }
@@ -4827,7 +4837,7 @@ genAddrOf (const iCode *ic)
       memset (&stl, 0, sizeof (stl));
       stl.type = AOP_STL;
       stl.size = 2;
-      stl.aopu.stk_off = (sym->stack >= 0 ? sym->stack + G.stack.param_offset : sym->stack + 1 + G.stack.locals_base) + off;
+      stl.aopu.stk_off = (sym->stack >= 0 ? sym->stack + G.stack.param_offset : sym->stack + spTop () + G.stack.locals_base) + off;
       /* both bytes come out of one spix/txa/txau sequence */
       if (result->aop->type == AOP_STK || result->aop->type == AOP_DIR)
         {
@@ -5418,7 +5428,7 @@ genLisaiCode (iCode *ic)
     {
       D (emit2 ("; A parked", ""));
       pushA ();
-      int stk = 1 - G.stack.pushed;
+      int stk = spTop () - G.stack.pushed;
       if (l)
         parkOperand (left, stk);
       if (r)

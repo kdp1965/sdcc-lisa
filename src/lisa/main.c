@@ -106,6 +106,10 @@ lisa_genIVT (struct dbuf_s *oBuf, symbol **intTable, int intCount)
  * l_<area>; two linker symbols cannot be added in one expression, so
  * the loops count down a copy of l_<area> kept on the stack.
  */
+/* n(sp) in the startup code below, written for TT07 (the top of the stack
+   is 1(sp)); the second chip's is 0(sp) */
+#define SPO(n) ((n) - (lisa_rev2 ? 1 : 0))
+
 static void
 lisa_genInitStartup (FILE *of)
 {
@@ -121,51 +125,53 @@ lisa_genInitStartup (FILE *of)
   fprintf (of, "\tif\tne\n");
   fprintf (of, "\tjal\t__sdcc_program_startup\n");
 
-  /* Zero DATA: IX = s_DATA, 2(sp):1(sp) = l_DATA counting down */
+  /* Zero DATA: IX = s_DATA, the count l_DATA in the two bytes on top of
+     the stack, counting down.  The offsets below are written for TT07,
+     where the top byte is 1(sp); SPO () moves them for --rev2 (0(sp)). */
   fprintf (of, "\tldi\t#>l_DATA\n");
   fprintf (of, "\tpush\ta\n");
   fprintf (of, "\tldi\t#<l_DATA\n");
   fprintf (of, "\tpush\ta\n");
   fprintf (of, "\tldx\t#s_DATA\n");
   fprintf (of, "00001$:\n");
-  fprintf (of, "\tldax\t1(sp)\n");
-  fprintf (of, "\tor\t2(sp)\n");
+  fprintf (of, "\tldax\t%d(sp)\n", SPO (1));
+  fprintf (of, "\tor\t%d(sp)\n", SPO (2));
   fprintf (of, "\tbz\t00002$\n");
   fprintf (of, "\tldi\t#0\n");
   fprintf (of, "\tstax\t0(ix)\n");
   fprintf (of, "\tadx\t#1\n");
   if (lisa_tt07_cache)
     {
-      fprintf (of, "\tcmp\t2(sp)\n");      /* TT07: the count's lines into the cache before the dcx */
-      fprintf (of, "\tcmp\t1(sp)\n");
+      fprintf (of, "\tcmp\t%d(sp)\n", SPO (2));      /* TT07: the count's lines into the cache before the dcx */
+      fprintf (of, "\tcmp\t%d(sp)\n", SPO (1));
     }
-  fprintf (of, "\tdcx\t1(sp)\n");
+  fprintf (of, "\tdcx\t%d(sp)\n", SPO (1));
   fprintf (of, "\tif\tc\n");
-  fprintf (of, "\tdcx\t2(sp)\n");
+  fprintf (of, "\tdcx\t%d(sp)\n", SPO (2));
   fprintf (of, "\tbr\t00001$\n");
   fprintf (of, "00002$:\n");
 
   /* Zero FDATA the same way, reusing the count slots */
   fprintf (of, "\tldi\t#>l_FDATA\n");
-  fprintf (of, "\tstax\t2(sp)\n");
+  fprintf (of, "\tstax\t%d(sp)\n", SPO (2));
   fprintf (of, "\tldi\t#<l_FDATA\n");
-  fprintf (of, "\tstax\t1(sp)\n");
+  fprintf (of, "\tstax\t%d(sp)\n", SPO (1));
   fprintf (of, "\tldx\t#s_FDATA\n");
   fprintf (of, "00005$:\n");
-  fprintf (of, "\tldax\t1(sp)\n");
-  fprintf (of, "\tor\t2(sp)\n");
+  fprintf (of, "\tldax\t%d(sp)\n", SPO (1));
+  fprintf (of, "\tor\t%d(sp)\n", SPO (2));
   fprintf (of, "\tbz\t00006$\n");
   fprintf (of, "\tldi\t#0\n");
   fprintf (of, "\tstax\t0(ix)\n");
   fprintf (of, "\tadx\t#1\n");
   if (lisa_tt07_cache)
     {
-      fprintf (of, "\tcmp\t2(sp)\n");      /* TT07: the count's lines into the cache before the dcx */
-      fprintf (of, "\tcmp\t1(sp)\n");
+      fprintf (of, "\tcmp\t%d(sp)\n", SPO (2));      /* TT07: the count's lines into the cache before the dcx */
+      fprintf (of, "\tcmp\t%d(sp)\n", SPO (1));
     }
-  fprintf (of, "\tdcx\t1(sp)\n");
+  fprintf (of, "\tdcx\t%d(sp)\n", SPO (1));
   fprintf (of, "\tif\tc\n");
-  fprintf (of, "\tdcx\t2(sp)\n");
+  fprintf (of, "\tdcx\t%d(sp)\n", SPO (2));
   fprintf (of, "\tbr\t00005$\n");
   fprintf (of, "00006$:\n");
 
@@ -176,75 +182,75 @@ lisa_genInitStartup (FILE *of)
   fprintf (of, "\tldi\t#<s_INITIALIZED\n");
   fprintf (of, "\tpush\ta\n");
   fprintf (of, "\tldi\t#>l_INITIALIZED\n");
-  fprintf (of, "\tstax\t4(sp)\n");
+  fprintf (of, "\tstax\t%d(sp)\n", SPO (4));
   fprintf (of, "\tldi\t#<l_INITIALIZED\n");
-  fprintf (of, "\tstax\t3(sp)\n");
+  fprintf (of, "\tstax\t%d(sp)\n", SPO (3));
   fprintf (of, "\tldx\t#s_INITIALIZER\n");
   fprintf (of, "00003$:\n");
-  fprintf (of, "\tldax\t3(sp)\n");
-  fprintf (of, "\tor\t4(sp)\n");
+  fprintf (of, "\tldax\t%d(sp)\n", SPO (3));
+  fprintf (of, "\tor\t%d(sp)\n", SPO (4));
   fprintf (of, "\tbz\t00004$\n");
   fprintf (of, "\tcall\tix\n");
   fprintf (of, "\tadx\t#1\n");
   fprintf (of, "\tpush\tix\n");
-  fprintf (of, "\tldxx\t3(sp)\n");
+  fprintf (of, "\tldxx\t%d(sp)\n", SPO (3));
   fprintf (of, "\tstax\t0(ix)\n");
   if (lisa_tt07_cache)
     {
-      fprintf (of, "\tcmp\t4(sp)\n");      /* TT07: the pointer's lines into the cache before the inx */
-      fprintf (of, "\tcmp\t3(sp)\n");
+      fprintf (of, "\tcmp\t%d(sp)\n", SPO (4));      /* TT07: the pointer's lines into the cache before the inx */
+      fprintf (of, "\tcmp\t%d(sp)\n", SPO (3));
     }
-  fprintf (of, "\tinx\t3(sp)\n");
+  fprintf (of, "\tinx\t%d(sp)\n", SPO (3));
   fprintf (of, "\tif\tc\n");
-  fprintf (of, "\tinx\t4(sp)\n");
+  fprintf (of, "\tinx\t%d(sp)\n", SPO (4));
   fprintf (of, "\tpop\tix\n");
   if (lisa_tt07_cache)
     {
-      fprintf (of, "\tcmp\t4(sp)\n");
-      fprintf (of, "\tcmp\t3(sp)\n");
+      fprintf (of, "\tcmp\t%d(sp)\n", SPO (4));
+      fprintf (of, "\tcmp\t%d(sp)\n", SPO (3));
     }
-  fprintf (of, "\tdcx\t3(sp)\n");
+  fprintf (of, "\tdcx\t%d(sp)\n", SPO (3));
   fprintf (of, "\tif\tc\n");
-  fprintf (of, "\tdcx\t4(sp)\n");
+  fprintf (of, "\tdcx\t%d(sp)\n", SPO (4));
   fprintf (of, "\tbr\t00003$\n");
   fprintf (of, "00004$:\n");
 
   /* the same for FINITIALIZER -> FINITIALIZED, reusing the slots */
   fprintf (of, "\tldi\t#>s_FINITIALIZED\n");
-  fprintf (of, "\tstax\t2(sp)\n");
+  fprintf (of, "\tstax\t%d(sp)\n", SPO (2));
   fprintf (of, "\tldi\t#<s_FINITIALIZED\n");
-  fprintf (of, "\tstax\t1(sp)\n");
+  fprintf (of, "\tstax\t%d(sp)\n", SPO (1));
   fprintf (of, "\tldi\t#>l_FINITIALIZED\n");
-  fprintf (of, "\tstax\t4(sp)\n");
+  fprintf (of, "\tstax\t%d(sp)\n", SPO (4));
   fprintf (of, "\tldi\t#<l_FINITIALIZED\n");
-  fprintf (of, "\tstax\t3(sp)\n");
+  fprintf (of, "\tstax\t%d(sp)\n", SPO (3));
   fprintf (of, "\tldx\t#s_FINITIALIZER\n");
   fprintf (of, "00007$:\n");
-  fprintf (of, "\tldax\t3(sp)\n");
-  fprintf (of, "\tor\t4(sp)\n");
+  fprintf (of, "\tldax\t%d(sp)\n", SPO (3));
+  fprintf (of, "\tor\t%d(sp)\n", SPO (4));
   fprintf (of, "\tbz\t00008$\n");
   fprintf (of, "\tcall\tix\n");
   fprintf (of, "\tadx\t#1\n");
   fprintf (of, "\tpush\tix\n");
-  fprintf (of, "\tldxx\t3(sp)\n");
+  fprintf (of, "\tldxx\t%d(sp)\n", SPO (3));
   fprintf (of, "\tstax\t0(ix)\n");
   if (lisa_tt07_cache)
     {
-      fprintf (of, "\tcmp\t4(sp)\n");      /* TT07: the pointer's lines into the cache before the inx */
-      fprintf (of, "\tcmp\t3(sp)\n");
+      fprintf (of, "\tcmp\t%d(sp)\n", SPO (4));      /* TT07: the pointer's lines into the cache before the inx */
+      fprintf (of, "\tcmp\t%d(sp)\n", SPO (3));
     }
-  fprintf (of, "\tinx\t3(sp)\n");
+  fprintf (of, "\tinx\t%d(sp)\n", SPO (3));
   fprintf (of, "\tif\tc\n");
-  fprintf (of, "\tinx\t4(sp)\n");
+  fprintf (of, "\tinx\t%d(sp)\n", SPO (4));
   fprintf (of, "\tpop\tix\n");
   if (lisa_tt07_cache)
     {
-      fprintf (of, "\tcmp\t4(sp)\n");
-      fprintf (of, "\tcmp\t3(sp)\n");
+      fprintf (of, "\tcmp\t%d(sp)\n", SPO (4));
+      fprintf (of, "\tcmp\t%d(sp)\n", SPO (3));
     }
-  fprintf (of, "\tdcx\t3(sp)\n");
+  fprintf (of, "\tdcx\t%d(sp)\n", SPO (3));
   fprintf (of, "\tif\tc\n");
-  fprintf (of, "\tdcx\t4(sp)\n");
+  fprintf (of, "\tdcx\t%d(sp)\n", SPO (4));
   fprintf (of, "\tbr\t00007$\n");
   fprintf (of, "00008$:\n");
   fprintf (of, "\tads\t#4\n");

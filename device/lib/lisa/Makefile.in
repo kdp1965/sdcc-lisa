@@ -28,7 +28,10 @@ override PORTDIR = ../build/$(MODEL)
 # ../strlen.c, which the .c rules of incl.mk would otherwise pick.  They
 # .include lisamodel.inc, which says whether this is the --tt07-cache
 # library (TT07_CACHE: the cmp before each inx / dcx) or the --rev2 one
-# (LISA_REV2: bf16_add is the hardware adder); the rule is below all:
+# (LISA_REV2: bf16_add is the hardware adder, T = 0: the byte on top of the
+# stack is 0(sp), the stack pointer decrementing before a push; on TT07 it
+# is 1(sp), T = 1 - the .s sources write their frame offsets as T+n(sp));
+# the rule is below all:
 %.rel: %.s lisamodel.inc
 	@# TODO: sdas should place it\'s output in the current dir
 	test "`cd $(dir $<) && pwd`" = "`pwd`" || cp $< .
@@ -102,6 +105,7 @@ all: $(PORTDIR)/$(LIB) $(PORTDIR)/$(LIB2)
 lisamodel.inc: Makefile
 	echo "TT07_CACHE = $(if $(filter lisa-cache,$(MODEL)),1,0)" > $@
 	echo "LISA_REV2 = $(if $(filter lisa-rev2,$(MODEL)),1,0)" >> $@
+	echo "T = $(if $(filter lisa-rev2,$(MODEL)),0,1)" >> $@
 
 $(PORTDIR)/$(LIB2): $(OBJ2) Makefile
 ifeq ($(LIB_TYPE), SDCCLIB)

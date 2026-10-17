@@ -26,8 +26,8 @@
 ;  might be covered by the GNU General Public License.
 ;--------------------------------------------------------------------------
 ;
-; void *memset(void *s, int c, size_t n): s at 1,2(sp), c at 3,4(sp) (its
-; low byte is the fill), n at 5,6(sp); s comes back in IX.  A leaf: RA is
+; void *memset(void *s, int c, size_t n): s at 1,T+1(sp), c at 3,T+3(sp) (its
+; low byte is the fill), n at 5,T+5(sp); s comes back in IX.  A leaf: RA is
 ; not saved.  The pointer stays in IX (adx) and the fill byte in A: the
 ; count comes down on the stack, where dcx leaves A alone - its low byte
 ; first, then 256 per high byte, which gets one more when the low byte's
@@ -36,6 +36,11 @@
 ; byte is brought into the data cache with a cmp first (a read-modify-
 ; write on a miss works on stale data there).
 
+;
+; Stack offsets: T(sp) is the byte on top of the stack, T+n(sp) the nth
+; below it; T comes from lisamodel.inc (1 on TT07, where a push writes at
+; SP and then decrements it, 0 on the second chip, where it decrements
+; first: sdcc --rev2, the lisa-rev2 library).
 	.include "lisamodel.inc"
 
 	.area CODE (CODE)
@@ -43,32 +48,32 @@
 	.globl _memset
 
 _memset:
-	ldax	5(sp)			; n's low byte
+	ldax	T+4(sp)			; n's low byte
 	bz	nlo0
 	.if TT07_CACHE
-	cmp	6(sp)
+	cmp	T+5(sp)
 	.endif
-	inx	6(sp)			; a partial pass of the low byte: one more of the high
+	inx	T+5(sp)			; a partial pass of the low byte: one more of the high
 	br	go
 nlo0:
-	or	6(sp)
+	or	T+5(sp)
 	bz	done			; n == 0
 go:
-	ldxx	1(sp)
-	ldax	3(sp)			; the fill byte, in A throughout
+	ldxx	T(sp)
+	ldax	T+2(sp)			; the fill byte, in A throughout
 loop:
 	stax	0(ix)
 	adx	#1
 	.if TT07_CACHE
-	cmp	5(sp)
+	cmp	T+4(sp)
 	.endif
-	dcx	5(sp)
+	dcx	T+4(sp)
 	bnz	loop
 	.if TT07_CACHE
-	cmp	6(sp)
+	cmp	T+5(sp)
 	.endif
-	dcx	6(sp)
+	dcx	T+5(sp)
 	bnz	loop
 done:
-	ldxx	1(sp)			; s
+	ldxx	T(sp)			; s
 	ret

@@ -26,7 +26,7 @@
 ;  might be covered by the GNU General Public License.
 ;--------------------------------------------------------------------------
 ;
-; char *strcpy(char *d, const char *s): d at 1,2(sp), s at 3,4(sp); d
+; char *strcpy(char *d, const char *s): d at 1,T+1(sp), s at 3,T+3(sp); d
 ; comes back in IX.  s is generic: its space (bit 15, ix_cond) is tested
 ; once and one of two loops runs, reading RAM or calling the ldi/ret pairs
 ; that hold constant data in code space (gptrget.s has the layout; the sra
@@ -34,29 +34,36 @@
 ; stack and swap them through IX (ldxx / stxx, adx bumping them), and copy
 ; the NUL before testing it.
 
+;
+; Stack offsets: T(sp) is the byte on top of the stack, T+n(sp) the nth
+; below it; T comes from lisamodel.inc (1 on TT07, where a push writes at
+; SP and then decrements it, 0 on the second chip, where it decrements
+; first: sdcc --rev2, the lisa-rev2 library).
+	.include "lisamodel.inc"
+
 	.area CODE (CODE)
 
 	.globl _strcpy
 
 _strcpy:
 	sra				; RA 1,2; d 3,4; s 5,6
-	ldax	4(sp)
+	ldax	T+3(sp)
 	push	a
-	ldax	4(sp)
+	ldax	T+3(sp)
 	push	a			; the destination cursor at 1,2; RA 3,4; d 5,6; s 7,8
-	ldxx	7(sp)
+	ldxx	T+6(sp)
 	txau
 	btst	7			; Z: s is in code space
 	bz	code
 ram:
 	ldax	0(ix)			; A = *s++
 	adx	#1
-	stxx	7(sp)
-	ldxx	1(sp)
+	stxx	T+6(sp)
+	ldxx	T(sp)
 	stax	0(ix)			; *d++ = A
 	adx	#1
-	stxx	1(sp)
-	ldxx	7(sp)
+	stxx	T(sp)
+	ldxx	T+6(sp)
 	cpi	#0x00
 	bnz	ram
 	br	done
@@ -69,16 +76,16 @@ code:
 codeloop:
 	call	ix			; A = the byte, IX the pair's ret
 	adx	#1			; the next pair
-	stxx	7(sp)
-	ldxx	1(sp)
+	stxx	T+6(sp)
+	ldxx	T(sp)
 	stax	0(ix)			; *d++ = A
 	adx	#1
-	stxx	1(sp)
-	ldxx	7(sp)
+	stxx	T(sp)
+	ldxx	T+6(sp)
 	cpi	#0x00
 	bnz	codeloop
 done:
-	ldxx	5(sp)			; d
+	ldxx	T+4(sp)			; d
 	ads	#2
 	lra
 	ret

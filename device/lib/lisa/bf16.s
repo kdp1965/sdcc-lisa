@@ -36,21 +36,28 @@
 ;
 ; Frames (no RA to save: leaf functions, the unit does not touch RA or
 ; IX): bf16_t f(bf16_t a, bf16_t b) returns in IX (a two-byte result) and
-; unsigned char f(bf16_t a, bf16_t b) in A, so for both a is at 1(sp),2(sp)
-; and b at 3(sp),4(sp).
+; unsigned char f(bf16_t a, bf16_t b) in A, so for both a is at T(sp),T+1(sp)
+; and b at T+2(sp),T+3(sp).
+
+;
+; Stack offsets: T(sp) is the byte on top of the stack, T+n(sp) the nth
+; below it; T comes from lisamodel.inc (1 on TT07, where a push writes at
+; SP and then decrements it, 0 on the second chip, where it decrements
+; first: sdcc --rev2, the lisa-rev2 library).
+	.include "lisamodel.inc"
 
 	.area CODE (CODE)
 
 ; facc <- b, f0 <- a
 .macro	LOAD2
-	ldax	1(sp)
+	ldax	T(sp)
 	taf	0
-	ldax	2(sp)
+	ldax	T+1(sp)
 	taf	1
 	fswap	f0
-	ldax	3(sp)
+	ldax	T+2(sp)
 	taf	0
-	ldax	4(sp)
+	ldax	T+3(sp)
 	taf	1
 .endm
 
@@ -86,17 +93,17 @@ _bf16_div:
 	STORE
 	ret
 
-; unsigned char bf16_gt(bf16_t a, bf16_t b): a at 1,2(sp), b at 3,4(sp)
+; unsigned char bf16_gt(bf16_t a, bf16_t b): a at 1,T+1(sp), b at 3,T+3(sp)
 	.globl _bf16_gt
 _bf16_gt:
-	ldax	3(sp)
+	ldax	T+2(sp)
 	taf	0
-	ldax	4(sp)
+	ldax	T+3(sp)
 	taf	1
 	fswap	f0			; f0 = b
-	ldax	1(sp)
+	ldax	T(sp)
 	taf	0
-	ldax	2(sp)
+	ldax	T+1(sp)
 	taf	1			; facc = a
 	fcmp	f0			; C = a > b
 	ldac	c
@@ -104,14 +111,14 @@ _bf16_gt:
 
 	.globl _bf16_eq
 _bf16_eq:
-	ldax	3(sp)
+	ldax	T+2(sp)
 	taf	0
-	ldax	4(sp)
+	ldax	T+3(sp)
 	taf	1
 	fswap	f0
-	ldax	1(sp)
+	ldax	T(sp)
 	taf	0
-	ldax	2(sp)
+	ldax	T+1(sp)
 	taf	1
 	fcmp	f0			; Z = a == b
 	ldac	eq
@@ -120,14 +127,14 @@ _bf16_eq:
 ; signed char bf16_cmp(bf16_t a, bf16_t b): -1, 0, 1
 	.globl _bf16_cmp
 _bf16_cmp:
-	ldax	3(sp)
+	ldax	T+2(sp)
 	taf	0
-	ldax	4(sp)
+	ldax	T+3(sp)
 	taf	1
 	fswap	f0
-	ldax	1(sp)
+	ldax	T(sp)
 	taf	0
-	ldax	2(sp)
+	ldax	T+1(sp)
 	taf	1
 	fcmp	f0			; Z = equal, C = a > b
 	ldac	eq			; A = equal; C kept
@@ -142,23 +149,23 @@ _bf16_cmp:
 	ldi	#0x00
 	ret
 
-; bf16_t bf16_from_uint(unsigned int x): x at 1,2(sp)
+; bf16_t bf16_from_uint(unsigned int x): x at 1,T+1(sp)
 	.globl _bf16_from_uint
 _bf16_from_uint:
-	ldax	1(sp)
+	ldax	T(sp)
 	taf	0
-	ldax	2(sp)
+	ldax	T+1(sp)
 	taf	1
 	itof
 	STORE
 	ret
 
-; unsigned int bf16_to_uint(bf16_t a): a at 1,2(sp)
+; unsigned int bf16_to_uint(bf16_t a): a at 1,T+1(sp)
 	.globl _bf16_to_uint
 _bf16_to_uint:
-	ldax	1(sp)
+	ldax	T(sp)
 	taf	0
-	ldax	2(sp)
+	ldax	T+1(sp)
 	taf	1
 	ftoi
 	STORE

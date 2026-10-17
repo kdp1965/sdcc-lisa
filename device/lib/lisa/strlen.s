@@ -26,7 +26,7 @@
 ;  might be covered by the GNU General Public License.
 ;--------------------------------------------------------------------------
 ;
-; size_t strlen(const char *s): s at 1,2(sp), the length comes back in
+; size_t strlen(const char *s): s at 1,T+1(sp), the length comes back in
 ; IX.  s is generic: its space (bit 15, ix_cond) is tested once.  A string
 ; in RAM is walked in IX alone and the length is the end minus s (subax /
 ; subaxu; IX arithmetic sets ix_cond, cleared again through taxu, as the
@@ -36,12 +36,19 @@
 ; with the tag masked off and C cleared first so that neither amode shifts
 ; anything in).
 
+;
+; Stack offsets: T(sp) is the byte on top of the stack, T+n(sp) the nth
+; below it; T comes from lisamodel.inc (1 on TT07, where a push writes at
+; SP and then decrements it, 0 on the second chip, where it decrements
+; first: sdcc --rev2, the lisa-rev2 library).
+	.include "lisamodel.inc"
+
 	.area CODE (CODE)
 
 	.globl _strlen
 
 _strlen:
-	ldxx	1(sp)
+	ldxx	T(sp)
 	txau
 	btst	7			; Z: s is in code space
 	bz	code
@@ -50,9 +57,9 @@ ram:
 	adx	#1
 	cpi	#0x00
 	bnz	ram			; IX = s + len + 1
-	ldax	1(sp)
+	ldax	T(sp)
 	subax
-	ldax	2(sp)
+	ldax	T+1(sp)
 	subaxu
 	adx	#-1			; IX = len, ix_cond set
 	txau
@@ -72,21 +79,21 @@ codeloop:
 	adx	#1			; the next pair
 	cpi	#0x00
 	bnz	codeloop		; IX = the first word + 2 * (len + 1)
-	ldax	2(sp)
+	ldax	T+1(sp)
 	subax
-	ldax	1(sp)
+	ldax	T(sp)
 	andi	#0x7f
 	subaxu
 	adx	#-2			; IX = 2 * len
-	stxx	1(sp)			; the low byte at 1, the high (bit 7 ix_cond) at 2
-	ldax	2(sp)
+	stxx	T(sp)			; the low byte at 1, the high (bit 7 ix_cond) at 2
+	ldax	T+1(sp)
 	andi	#0x7f
-	stax	2(sp)
+	stax	T+1(sp)
 	ldc	#0
-	ldax	1(sp)
-	shr16	2(sp)			; {2(sp), A} >>= 1: len
+	ldax	T(sp)
+	shr16	T+1(sp)			; {T+1(sp), A} >>= 1: len
 	tax
-	ldax	2(sp)
+	ldax	T+1(sp)
 	taxu
 	ads	#2
 	lra

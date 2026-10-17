@@ -31,10 +31,17 @@
 ;
 ; Frame at entry to int __setjmp(jmp_buf buf), before any push (the int
 ; result comes back in IX):
-;   1(sp),2(sp)  buf
+;   T(sp),T+1(sp)  buf
 ; Frame at entry to void longjmp(jmp_buf buf, int val):
-;   1(sp),2(sp)  buf
-;   3(sp),4(sp)  val
+;   T(sp),T+1(sp)  buf
+;   T+2(sp),T+3(sp)  val
+
+;
+; Stack offsets: T(sp) is the byte on top of the stack, T+n(sp) the nth
+; below it; T comes from lisamodel.inc (1 on TT07, where a push writes at
+; SP and then decrements it, 0 on the second chip, where it decrements
+; first: sdcc --rev2, the lisa-rev2 library).
+	.include "lisamodel.inc"
 
 	.area CODE (CODE)
 
@@ -52,7 +59,7 @@ ___setjmp:
 	txau
 	push	a			; RA high + cond
 	xchg	ra			; RA restored
-	ldxx	5(sp)			; IX = buf (1(sp) + the 4 pushed bytes)
+	ldxx	T+4(sp)			; IX = buf (T(sp) + the 4 pushed bytes)
 	pop	a
 	stax	3(ix)			; RA high
 	pop	a
@@ -69,19 +76,19 @@ ___setjmp:
 	.globl _longjmp
 _longjmp:
 	; restore RA first, while still on this stack
-	ldxx	1(sp)			; IX = buf
+	ldxx	T(sp)			; IX = buf
 	ldax	3(ix)
 	push	a			; RA high + cond
 	ldax	2(ix)
-	push	a			; RA low: 1(sp) low, 2(sp) high, as ldxx wants
-	ldxx	1(sp)
+	push	a			; RA low: T(sp) low, T+1(sp) high, as ldxx wants
+	ldxx	T(sp)
 	xchg	ra			; RA = saved RA (with ra_cond), IX = junk
 	ads	#2
-	ldxx	1(sp)			; IX = buf
+	ldxx	T(sp)			; IX = buf
 	; val goes into buf[2..3] (the RA bytes are no longer needed)
-	ldax	3(sp)
+	ldax	T+2(sp)
 	stax	2(ix)
-	ldax	4(sp)
+	ldax	T+3(sp)
 	stax	3(ix)
 	; IX = saved SP
 	ldax	0(ix)
@@ -91,11 +98,12 @@ _longjmp:
 	pop	a
 	tax
 	xchg	sp			; SP = setjmp's entry SP (S1), IX = this frame's SP (S0)
-	; this frame's buf pointer is at 1(ix),2(ix).  Either S0 == S1 (same
-	; frame) or S0 <= S1 - 3, so the push below never lands on them.
-	ldax	2(ix)
+	; this frame's buf pointer is at T(ix),T+1(ix) (the frame's T(sp) and
+	; T+1(sp) through S0).  Either S0 == S1 (same frame) or S0 <= S1 - 3,
+	; so the push below never lands on them.
+	ldax	T+1(ix)
 	push	a			; buf high
-	ldax	1(ix)
+	ldax	T(ix)
 	tax
 	pop	a
 	taxu				; IX = buf

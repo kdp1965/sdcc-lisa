@@ -161,20 +161,29 @@ build/bin/sdcc -mlisa -o prog.ihx prog.c          # Intel HEX, byte addresses = 
   it).  Splitting data across the halves gains nothing: whatever is
   used in one half is unusable in the other.
 * `--rev2`: a program for the second chip (`ttsky26c-um-lisa-ttlc`, whose
-  `RESPIN.md` lists what its silicon fixes).  It links `lib/lisa-rev2`,
-  the library compiled with the option, in which `bf16_add` - and so
-  `bf16_sub` and `--bf16-float`'s `__fsadd`/`__fssub` - is the chip's
-  adder (`fadd`: correct there, nearest even, 15 instructions against the
-  software addition's few hundred; `device/lib/lisa/bf16add.s` under
-  `LISA_REV2` from `lisamodel.inc`), and it defines `__SDCC_LISA_REV2` for
-  the source.  The code the compiler itself generates is still the TT07
-  code: the rev-2 sequences (`ret #imm8` for the constants, the plain
-  `adc`/`sub`/`cmp`, the divider's result in RA) are to come.  `--rev2`
+  `RESPIN.md` lists what its silicon fixes).  Two things change.  The
+  stack: on that chip a push decrements SP before it writes and a pop
+  reads before it increments, so SP points at the byte on top of the
+  stack and every frame offset is one less than on TT07 (`0(sp)` is the
+  top; `gen.c` counts every offset from `spTop ()`, 1 or 0, and the
+  library's `.s` sources write theirs as `T+n(sp)` with `T` from
+  `lisamodel.inc`, 1 or 0 - an `spix; adx #T+n` for a computed address).
+  And the library: it links `lib/lisa-rev2`, compiled with the option, in
+  which `bf16_add` - and so `bf16_sub` and `--bf16-float`'s
+  `__fsadd`/`__fssub` - is the chip's adder (`fadd`: correct there,
+  nearest even, 15 instructions against the software addition's few
+  hundred; `bf16add.s` under `LISA_REV2`).  `__SDCC_LISA_REV2` is defined
+  for the source.  The code sequences the compiler generates are otherwise
+  still the TT07 ones: `ret #imm8` for the constants, the plain
+  `adc`/`sub`/`cmp` and the divider's result in RA are to come.  `--rev2`
   and `--tt07-cache` exclude each other (that layout is for the TT07
   cache's bit-14 alias, which the second chip's cache does not have).
-  `lisa_sim` models the TT07 chip, so a `--rev2` program's additions are
-  only right on the second chip and its testbench
-  (`ttsky26c-um-lisa-ttlc/test`, `make IHX=<prog.ihx>`).
+  `lisa_sim --rev2` models the chip (the stack, the adder, the divider
+  without its stray write, `swap n(sp)`, the interrupt semantics of
+  `--fixed-irq`); `make check REV2=1` in `sdcc_test` and `make test-lisa
+  LISA_REV2=1` in `build/support/regression` run the suites that way.  The
+  debuggers follow the convention through `lisa_cdb`'s `Cdb::set_sp_top`
+  (lisa_sim sets it from `--rev2`).
 * Code size: `gen.c` tracks what A holds and skips reloads, compares
   against 0 are sign-bit tests or `bnz` chains, and the peephole rules
   (`src/lisa/peeph.def`) thread branches and drop dead code; `--no-peep`

@@ -26,7 +26,7 @@
 ;  might be covered by the GNU General Public License.
 ;--------------------------------------------------------------------------
 ;
-; int strcmp(const char *s1, const char *s2): s1 at 1,2(sp), s2 at 3,4(sp);
+; int strcmp(const char *s1, const char *s2): s1 at 1,T+1(sp), s2 at 3,T+3(sp);
 ; the result, *s1 - *s2 as unsigned bytes at the first difference, comes
 ; back in IX.  Both are generic pointers: each one's space (bit 15,
 ; ix_cond) is tested once and one of four loops runs, a string in RAM
@@ -41,6 +41,13 @@
 ; not make, so the sign of the result is forced positive when *s2 is the
 ; NUL.
 
+;
+; Stack offsets: T(sp) is the byte on top of the stack, T+n(sp) the nth
+; below it; T comes from lisamodel.inc (1 on TT07, where a push writes at
+; SP and then decrements it, 0 on the second chip, where it decrements
+; first: sdcc --rev2, the lisa-rev2 library).
+	.include "lisamodel.inc"
+
 	.area CODE (CODE)
 
 	.globl _strcmp
@@ -50,82 +57,82 @@ _strcmp:
 	ldi	#0x00
 	push	a			; a byte for *s2 at 1; RA 2,3; s1 4,5; s2 6,7
 	ldc	#0			; C = 0 up to the first cmp
-	ldxx	6(sp)
+	ldxx	T+5(sp)
 	txau
 	btst	7			; Z: s2 is in code space
 	bz	s2code
-	ldxx	4(sp)
+	ldxx	T+3(sp)
 	txau
 	btst	7			; Z: s1 is in code space
 	bz	s1code
 ; s1 and s2 in RAM
 rr:
-	ldxx	4(sp)
+	ldxx	T+3(sp)
 	ldax	0(ix)			; A = *s1++
 	adx	#1
-	stxx	4(sp)
-	ldxx	6(sp)
+	stxx	T+3(sp)
+	ldxx	T+5(sp)
 	cmp	0(ix)			; - *s2
 	bnz	diffm			; A = *s1, IX -> *s2
 	adx	#1			; s2++
-	stxx	6(sp)
+	stxx	T+5(sp)
 	cpi	#0x00			; the NUL?  (C = 0 again for the next cmp)
 	bnz	rr
 	br	equal
 ; s1 in code space, s2 in RAM
 s1code:
 	jal	pair			; IX = the word of s1's first ldi/ret pair
-	stxx	4(sp)
+	stxx	T+3(sp)
 cr:
-	ldxx	4(sp)
+	ldxx	T+3(sp)
 	call	ix			; A = *s1, IX the pair's ret
 	adx	#1			; the next pair
-	stxx	4(sp)
-	ldxx	6(sp)
+	stxx	T+3(sp)
+	ldxx	T+5(sp)
 	cmp	0(ix)			; - *s2
 	bnz	diffm
 	adx	#1
-	stxx	6(sp)
+	stxx	T+5(sp)
 	cpi	#0x00
 	bnz	cr
 	br	equal
-; s2 in code space: *s2 is read first, into the byte at 1(sp)
+; s2 in code space: *s2 is read first, into the byte at T(sp)
 s2code:
 	jal	pair			; IX = the word of s2's first ldi/ret pair
-	stxx	6(sp)
-	ldxx	4(sp)
+	stxx	T+5(sp)
+	ldxx	T+3(sp)
 	txau
 	btst	7			; Z: s1 is in code space too
 	bz	cc
 rc:
-	ldxx	6(sp)
+	ldxx	T+5(sp)
 	call	ix			; A = *s2, IX the pair's ret
 	adx	#1			; the next pair
-	stxx	6(sp)
-	stax	1(sp)
-	ldxx	4(sp)
+	stxx	T+5(sp)
+	stax	T(sp)
+	ldxx	T+3(sp)
 	ldax	0(ix)			; A = *s1++
 	adx	#1
-	stxx	4(sp)
-	cmp	1(sp)			; - *s2
-	bnz	difft			; A = *s1, *s2 at 1(sp)
+	stxx	T+3(sp)
+	cmp	T(sp)			; - *s2
+	bnz	difft			; A = *s1, *s2 at T(sp)
 	cpi	#0x00
 	bnz	rc
 	br	equal
 cc:
 	jal	pair			; IX = the word of s1's first ldi/ret pair
-	stxx	4(sp)
+	stxx	T+3(sp)
 ccl:
-	ldxx	6(sp)
+	ldxx	T+5(sp)
 	call	ix			; A = *s2
 	adx	#1
-	stxx	6(sp)
-	stax	1(sp)
-	ldxx	4(sp)
+	stxx	T+5(sp)
+	stax	T(sp)
+	ldxx	T+3(sp)
 	call	ix			; A = *s1
 	adx	#1
-	stxx	4(sp)
-	cmp	1(sp)
+	stxx	T+3(sp)
+	cmp	T(sp)
 	bnz	difft
 	cpi	#0x00
 	bnz	ccl
@@ -134,19 +141,19 @@ equal:
 	tax
 	taxu				; IX = 0
 	br	exit
-; *s1 (A) and *s2 (at 0(ix)) differ: *s2 to 1(sp), where the loops with
+; *s1 (A) and *s2 (at 0(ix)) differ: *s2 to T(sp), where the loops with
 ; s2 in code space leave it
 diffm:
 	push	a
 	ldax	0(ix)
-	stax	2(sp)
+	stax	T+1(sp)
 	pop	a
 difft:
 	ldc	#0			; sub subtracts the carry-in too (TT07)
-	sub	1(sp)			; A = *s1 - *s2, C = the borrow - spurious when *s2 == 0 (TT07)
+	sub	T(sp)			; A = *s1 - *s2, C = the borrow - spurious when *s2 == 0 (TT07)
 	tax				; the low byte of the result
 	savec
-	ldax	1(sp)
+	ldax	T(sp)
 	cpi	#0x00			; *s2 == 0: *s1 - 0 cannot borrow (C = 0 here)
 	bz	high
 	restc				; the borrow

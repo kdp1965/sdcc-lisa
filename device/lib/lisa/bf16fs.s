@@ -27,11 +27,18 @@
 ;  might be covered by the GNU General Public License.
 ;--------------------------------------------------------------------------
 ;
-; float f(float a, float b): after sra the return slot is 3..6(sp), a is
-; 7..10(sp) and b 11..14(sp), low byte first.  A float's bfloat16 is its
+; float f(float a, float b): after sra the return slot is 3..T+5(sp), a is
+; 7..T+9(sp) and b 11..T+13(sp), low byte first.  A float's bfloat16 is its
 ; top half, rounded to nearest even by the low half (fs_round); the two
 ; go on the stack as the arguments of the bf16_t routine, whose result
 ; becomes the top half of the returned float, the low half zero.
+
+;
+; Stack offsets: T(sp) is the byte on top of the stack, T+n(sp) the nth
+; below it; T comes from lisamodel.inc (1 on TT07, where a push writes at
+; SP and then decrements it, 0 on the second chip, where it decrements
+; first: sdcc --rev2, the lisa-rev2 library).
+	.include "lisamodel.inc"
 
 	.area CODE (CODE)
 
@@ -84,25 +91,25 @@ fs_take:
 .macro	ARGS
 	sra
 	spix
-	adx	#11
+	adx	#T+10
 	jal	fs_round
 	push	ix		; b
 	spix
-	adx	#9
+	adx	#T+8
 	jal	fs_round
 	push	ix		; a
 .endm
 
-; the bf16_t result in IX into the float's top half (now 9,10(sp): a 1,2;
+; the bf16_t result in IX into the float's top half (now 9,T+9(sp): a 1,2;
 ; b 3,4; RA 5,6; the float's slot 7..10)
 .macro	RESULT
 	txa
-	stax	9(sp)
+	stax	T+8(sp)
 	txau
-	stax	10(sp)
+	stax	T+9(sp)
 	ldi	#0x00
-	stax	7(sp)
-	stax	8(sp)
+	stax	T+6(sp)
+	stax	T+7(sp)
 	ads	#4
 	lra
 	ret
@@ -117,10 +124,10 @@ ___fsadd:
 	.globl ___fssub
 ___fssub:
 	ARGS
-	ldax	4(sp)		; b's sign
+	ldax	T+3(sp)		; b's sign
 	ldc	#0
 	adc	#0x80
-	stax	4(sp)
+	stax	T+3(sp)
 	jal	_bf16_add
 	RESULT
 
