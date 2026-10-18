@@ -245,6 +245,54 @@ correct (`test_irq.c` passes there with interrupts landing anywhere in
 32-bit arithmetic, signed multiplies and shifts). The RTL changes for that
 are listed in `lisa_isa.md` ("TT07 interrupt notes").
 
+## Code banks (the second chip, `--rev2`)
+
+The second chip (ttsky26d-um-lisa-ttlc, RESPIN.md item 22) makes the upper
+16K words of the code space a window on one of 16 banks, chosen by the
+code bank register `[p:0x15]` (reset 1 = the plain 32K layout; `lisa_isa.md`
+"Bank registers").  The port uses it for functions declared `__banked`:
+
+```c
+/* bank2.c */
+#pragma bank 2                      /* this file's code goes to the area BANK2 */
+unsigned int sum(unsigned int a, unsigned int b) __banked { return a + b; }
+
+/* main.c */
+unsigned int sum(unsigned int a, unsigned int b) __banked;   /* the same attribute in every declaration */
+...   sum(1, 2) ...
+```
+
+    sdcc -mlisa --rev2 -c bank2.c                                 # one source per run
+    sdcc -mlisa --rev2 -o prog.ihx main.c bank2.rel -Wl-bBANK2=0x10000
+
+* `#pragma bank n` (1..15; 0 or BASE = the common area CODE again) names the
+  area `BANKn`; the link option `-bBANKn=<byte n * 0x8000>` puts it at word
+  0x4000 of bank n (the Intel HEX then has type-04 records, which lisa_sim,
+  lisa_pydb, the testbench's ihx2hex.py and ttlc_io.py read).  The linker
+  turns every code address at or above word 0x4000 into its window address,
+  so `jal`, `ldx #_f` and function pointers are right from any bank.
+* A `__banked` call pushes the callee's bank (`b_f`, an equate the
+  definition emits), loads IX with the function and runs `___sdcc_bcall`
+  (device/lib/lisa/bcall.s, in HOME): it saves RA and the caller's bank
+  under the callee's frame, switches the bank, calls, switches back and
+  returns; the result stays in A / IX.  The callee's stack parameters and
+  return slot are 3 bytes deeper than a plain function's (the port's
+  `banked_overhead`).  Pointers to `__banked` functions are 3 bytes
+  (address, bank) and are called the same way.
+* The common code must stay below word 0x4000: HOME (the vectors, the
+  trampoline), CODE (`main`, every function without `#pragma bank`, the
+  library), GSINIT, CONST.  Interrupt handlers belong there (the hardware
+  does not switch banks on an interrupt).  Watch the `.map`: the linker does
+  not check it yet.  Constants (`const`, string literals) live in CONST
+  whichever file declares them, so a bank's functions may use them.
+* Not banked: data.  The data and stack bank registers (`[p:0x16]`,
+  `[p:0x17]`) exist, and inline assembly or an RTOS may use them, but the
+  compiler has no far data pointers yet.
+* `sdcc_test/test_bank.c` (+ `test_bank2.c`, `test_bank3.c`; `make check
+  REV2=1`) exercises calls from the common area and between banks, byte /
+  int / long results, A and stack parameters, 3-byte function pointers and
+  recursion across banks.
+
 ## Regression testing
 
 SDCC's own suite (`support/regression`, ~1650 test files, ~6000 generated

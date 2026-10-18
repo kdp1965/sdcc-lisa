@@ -33,12 +33,14 @@ static char lisa_defaultRules[] = {
 
 static char *lisa_keywords[] = {
   "at",
+  "banked",
   "code",
   "critical",
   "data",
   "interrupt",
   "naked",
   "near",
+  "nonbanked",
   "reentrant",
   "sfr",
   NULL
@@ -549,6 +551,77 @@ get_model (void)
     $L is the list of extra options that should be passed on the command line...
     MUST be terminated with a NULL.
 */
+/* #pragma bank n: the functions of this file go to the code area BANKn,
+   which the link puts in code bank n (-Wl-bBANKn=<byte n * 0x8000>;
+   RESPIN 22 of ttsky26d-um-lisa-ttlc): called through
+   ___sdcc_bcall when declared __banked.  BASE (or 0) is the common area
+   CODE again */
+enum
+{
+  P_BANK = 1,
+};
+
+static int
+do_pragma (int id, const char *name, const char *cp)
+{
+  struct pragma_token_s token;
+  int err = 0;
+  int processed = 1;
+
+  init_pragma_token (&token);
+
+  switch (id)
+    {
+    case P_BANK:
+      {
+        struct dbuf_s buffer;
+
+        dbuf_init (&buffer, 32);
+        cp = get_pragma_token (cp, &token);
+        if (token.type == TOKEN_INT && token.val.int_val >= 1 && token.val.int_val <= 15)
+          dbuf_printf (&buffer, "BANK%d (CODE)", token.val.int_val);
+        else if (token.type == TOKEN_INT && token.val.int_val == 0)
+          dbuf_append_str (&buffer, "CODE (CODE)");
+        else if (token.type != TOKEN_EOL && !strcmp (get_pragma_string (&token), "BASE"))
+          dbuf_append_str (&buffer, "CODE (CODE)");
+        else
+          err = 1;
+        cp = get_pragma_token (cp, &token);
+        if (token.type != TOKEN_EOL)
+          err = 1;
+        if (err)
+          dbuf_destroy (&buffer);
+        else
+          {
+            dbuf_c_str (&buffer);
+            options.code_seg = (char *) dbuf_detach (&buffer);
+          }
+      }
+      break;
+
+    default:
+      processed = 0;
+      break;
+    }
+
+  if (err)
+    werror (W_BAD_PRAGMA_ARGUMENTS, name);
+
+  free_pragma_token (&token);
+  return processed;
+}
+
+static struct pragma_s pragma_tbl[] = {
+  {"bank", P_BANK, 0, do_pragma},
+  {NULL, 0, 0, NULL},
+};
+
+static int
+_process_pragma (const char *s)
+{
+  return process_pragma_tbl (pragma_tbl, s);
+}
+
 static const char *_linkCmd[] =
 {
   "sdldlisa", "-nf", "\"$1\"", "$L", NULL
@@ -614,7 +687,7 @@ PORT lisa_port =
     2,                          /* far ptr */
     2,                          /* generic ptr */
     2,                          /* func ptr */
-    0,                          /* banked func ptr */
+    3,                          /* banked func ptr: the address and the bank (RESPIN 22) */
     1,                          /* bit */
     4,                          /* float */
     64,                         /* bit-precise integer types up to _BitInt (64) */
@@ -657,7 +730,7 @@ PORT lisa_port =
      0,                         /* isr overhead */
      0,                         /* call overhead: the return address stays in RA */
      0,
-     0,
+     3,                         /* banked call overhead: the bank byte, the caller's RA (___sdcc_bcall) */
      1,                         /* sp points to next free stack location */
   },
   { -1, false, false },         /* Neither int x int -> long nor unsigned long x unsigned char -> unsigned long long multiplication support routine. */
@@ -700,7 +773,7 @@ PORT lisa_port =
   lisa_genInitStartup,          /* genInitStartup */
   lisa_reset_regparm,
   lisa_reg_parm,
-  0,                            /* process_pragma */
+  _process_pragma,              /* #pragma bank */
   0,                            /* getMangledFunctionName */
   _hasNativeMulFor,             /* hasNativeMulFor */
   hasExtBitOp,                  /* hasExtBitOp */

@@ -87,7 +87,7 @@ LISAOBJECTS = $(patsubst %.c,%.rel,$(LISA_FLOAT) $(LISA_INT) $(LISA_LONG) $(LISA
 # memcpy (with __memcpy), memset, strcpy, strlen and strcmp are assembly: a
 # loop per space of the generic source, the pointers swapped through IX
 OBJ = setjmp.rel atomic_flag_test_and_set.rel heap.rel divu.rel divul.rel gptrget.rel bf16.rel bf16add.rel bf16c.rel \
-  memcpy.rel memset.rel strcpy.rel strlen.rel strcmp.rel
+  memcpy.rel memset.rel strcpy.rel strlen.rel strcmp.rel bcall.rel
 
 LIB = lisa.lib
 # --bf16-float: the float support routines on the bfloat16 unit, linked

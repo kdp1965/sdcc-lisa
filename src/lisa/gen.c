@@ -55,6 +55,7 @@ static struct genState
       int param_offset;   /* entry-SP-relative offset of the first parameter byte, minus sym->stack: 1 + return slot */
       int locals_base;    /* entry-SP-relative offset of the byte above the locals: -(saved RA, saved ISR registers) */
       int ret_size;       /* size of the return slot (0 if the function returns <= 1 byte, or in IX) */
+      int ret_base;       /* entry-SP-relative offset of the return slot: spTop (), + 3 in a __banked function */
       bool ret_ix;        /* the result comes back in IX (lisaRetInIX) */
     } stack;
   bool ra_saved;          /* the prologue did sra */
@@ -587,6 +588,8 @@ immArg (const asmop *aop, int offset)
     SNPRINTF (buffer, sizeof (buffer), "#<(%s + %d)", aop->aopu.immd, off);
   else if (offset == 1)
     SNPRINTF (buffer, sizeof (buffer), "#>(%s + %d)", aop->aopu.immd, off);
+  else if (offset == 2 && aop->aopu.func)
+    SNPRINTF (buffer, sizeof (buffer), "#b%s", aop->aopu.immd);   /* a banked function pointer's bank */
   else
     SNPRINTF (buffer, sizeof (buffer), "#0x00");
   return (buffer);
@@ -778,7 +781,7 @@ aopForRetSlot (const symbol *sym)
   asmop *aop = newAsmop (AOP_STK);
   aop->size = G.stack.ret_size;
   for (int i = 0; i < aop->size && i < 8; i++)
-    aop->aopu.bytes[i].byteu.stk = spTop () + i;
+    aop->aopu.bytes[i].byteu.stk = G.stack.ret_base + i;
   return (aop);
 }
 
@@ -1431,7 +1434,12 @@ setupFrame (const iCode *ic)
   G.stack.size = sym->stack;
   G.stack.ret_ix = lisaRetInIX (ftype);
   G.stack.ret_size = (retsize > 1 || IS_STRUCT (ftype->next)) && !G.stack.ret_ix ? retsize : 0;
+  /* a __banked function is entered from ___sdcc_bcall, which keeps the
+     caller's RA and code bank under the return slot and parameters: the
+     generic code lays the parameters out 3 bytes deeper (the port's
+     stack.banked_overhead), the return slot is at that depth too */
   G.stack.param_offset = spTop () + G.stack.ret_size;
+  G.stack.ret_base = spTop () + (IFFUNC_BANKED (ftype) ? 3 : 0);
   G.stack.locals_base = 0;
   G.ra_saved = false;
   ixInvalidate ();
@@ -1471,6 +1479,16 @@ genFunction (iCode *ic)
   emit2 (";", " Function %s", sym->name);
   emit2 (";", "---------------------------------");
 
+  if (IFFUNC_BANKED (ftype))
+    {
+      /* its bank for ___sdcc_bcall: #pragma bank's (the area BANKn), else
+         1 - the upper half of the default layout, or below 0x4000 where
+         the bank does not matter */
+      int bank = 1;
+      if (options.code_seg && !strncmp (options.code_seg, "BANK", 4) && isdigit ((unsigned char) options.code_seg[4]))
+        bank = atoi (options.code_seg + 4);
+      emit2 ("", "b%s = %d", sym->rname, bank);
+    }
   emit2 ("", "%s:", sym->rname);
   if (!regalloc_dry_run)
     genLine.lineCurr->isLabel = 1;
@@ -1599,7 +1617,7 @@ genReturn (const iCode *ic)
           slot.type = AOP_STK;
           slot.size = G.stack.ret_size;
           for (int i = 0; i < slot.size && i < 8; i++)
-            slot.aopu.bytes[i].byteu.stk = spTop () + i;
+            slot.aopu.bytes[i].byteu.stk = G.stack.ret_base + i;
           /* bytes beyond the 8 tracked ones are addressed from byte 0; a
              temporary that aopForRetSlot put in the slot is there already */
           for (int i = 0; i < G.stack.ret_size; i++)
@@ -1791,6 +1809,33 @@ genCall (const iCode *ic)
   if (bigreturn)
     adjustStack (-retsize);
 
+  /* a call into a code bank goes through ___sdcc_bcall (lisa_isa.md "Bank
+     registers"): the callee's bank byte on the stack, IX the function.  A
+     may carry the first byte parameter: pushed first, then swapped with the
+     bank (swap n(sp) is right on the second chip, the only one with banks) */
+  const bool banked = IFFUNC_ISBANKEDCALL (ftype);
+  const bool a_parm = FUNC_ARGS (ftype) && IS_REGPARM (FUNC_ARGS (ftype)->etype) && !IFFUNC_HASVARARGS (ftype);
+  if (banked)
+    {
+      if (a_parm)
+        pushA ();
+      if (ic->op != PCALL)
+        emit2 ("ldi", "#b%s", OP_SYMBOL (left)->rname);
+      else if (left->aop->type == AOP_IMMD)
+        emit2 ("ldi", "#b%s", left->aop->aopu.immd);
+      else
+        loadA (left->aop, 2);
+      cost (1, 1);
+      if (a_parm)
+        {
+          emit2 ("swap", "%d(sp)", spTop ());
+          cost (1, 2);
+        }
+      else
+        pushA ();
+      aInvalidate ();
+    }
+
   if (ic->op == PCALL)
     {
       /* function pointer: into IX */
@@ -1807,7 +1852,6 @@ genCall (const iCode *ic)
       else
         {
           /* the first parameter may already be in A (genSend) */
-          bool a_parm = FUNC_ARGS (ftype) && IS_REGPARM (FUNC_ARGS (ftype)->etype) && !IFFUNC_HASVARARGS (ftype);
           if (a_parm)
             pushA ();
           loadA (left->aop, 0);
@@ -1819,7 +1863,7 @@ genCall (const iCode *ic)
           if (a_parm)
             popA ();
         }
-      emit2 ("call", "ix");
+      emit2 (banked ? "jal" : "call", banked ? "___sdcc_bcall" : "ix");
       cost (1, 3);
     }
   else if (IS_OP_LITERAL (left))
@@ -1827,6 +1871,12 @@ genCall (const iCode *ic)
       /* a call through a constant: the word address in IX */
       emit2 ("ldx", "#0x%04x", (unsigned) operandLitValue (left) & 0x7fff);
       emit2 ("call", "ix");
+      cost (3, 5);
+    }
+  else if (banked)
+    {
+      emit2 ("ldx", "#%s", OP_SYMBOL (left)->rname);
+      emit2 ("jal", "___sdcc_bcall");
       cost (3, 5);
     }
   else
@@ -1879,7 +1929,7 @@ genCall (const iCode *ic)
           slot.type = AOP_STK;
           slot.size = retsize;
           for (int i = 0; i < retsize && i < 8; i++)
-            slot.aopu.bytes[i].byteu.stk = spTop () - G.stack.pushed + i;   /* the top of the stack .. */
+            slot.aopu.bytes[i].byteu.stk = spTop () - G.stack.pushed + i + (banked ? 1 : 0);   /* the top of the stack (under a banked call's bank byte) .. */
           /* a narrower result (the division support calls): only its bytes.
              High byte first, so that A ends up holding byte 0 for whatever
              uses the result next (the A tracker) */
@@ -1890,8 +1940,8 @@ genCall (const iCode *ic)
       freeAsmop (IC_RESULT (ic));
     }
 
-  /* drop the return slot and the arguments */
-  adjustStack ((bigreturn ? retsize : 0) + ic->parmBytes);
+  /* drop the return slot, the arguments and a banked call's bank byte */
+  adjustStack ((bigreturn ? retsize : 0) + ic->parmBytes + (banked ? 1 : 0));
 }
 
 /*-----------------------------------------------------------------*/

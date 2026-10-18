@@ -409,7 +409,7 @@ relr3(void)
                  */
                 if (TARGET_IS_LISA) {
                         struct area *bap;
-                        a_uint f, v, op;
+                        a_uint f, v, op, w;
                         int n, k, iscode, iscdata;
 
                         if (mode & R3_SYM)
@@ -435,14 +435,21 @@ relr3(void)
                         } else {
                                 v = reli + f;
                                 if (iscode) {
+                                        /* a word at or above 0x4000 is in a
+                                         * code bank (RESPIN 22: the area BANKn
+                                         * at byte n * 0x8000); the core sees
+                                         * it through the upper window */
+                                        w = v >> 1;
+                                        if (w >= 0x4000)
+                                                w = 0x4000 | (w & 0x3FFF);
                                         if (!(mode & R3_BYTE) && (mode & R3_USGN))
-                                                v = (v >> 1) & 0x7FFF;          /* jal */
+                                                v = w;                          /* jal */
                                         else if (!(mode & R3_BYTE) && (mode & R3_PAG0))
-                                                v = (v >> 1) | 0x8000;          /* ldx: word address */
+                                                v = w | 0x8000;                 /* ldx: word address */
                                         else if (iscdata)
                                                 v = (v >> 2) | 0x8000;          /* pointer to constant data */
                                         else
-                                                v = (v >> 1) | 0x8000;          /* function pointer */
+                                                v = w | 0x8000;                 /* function pointer */
                                 }
                                 if (!(mode & R3_BYTE))
                                         mode &= ~(R3_USGN | R3_PAG0);

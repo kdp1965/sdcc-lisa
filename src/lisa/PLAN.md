@@ -61,6 +61,14 @@ with the stack handling of the stm8/z80 ports.
   Every stack operand is `ldax n(sp)` / `stax n(sp)` with n <= 511, so no frame
   pointer.  Frames larger than that are not supported for now (there is 128
   bytes of RAM).
+* `__banked` functions (the second chip's code banks, README-lisa.md "Code
+  banks") are entered from `___sdcc_bcall`, which leaves the caller's RA at
+  0(sp)/1(sp) and the caller's code bank at 2(sp): their return slot and
+  parameters are 3 bytes deeper (the port's `stack.banked_overhead`, which
+  SDCC's parameter layout applies; the return slot needs the same shift).
+  The caller pushes the bank byte (`b_<f>`, equated by the definition from
+  `#pragma bank`'s area BANKn) before the call and drops it after; a
+  banked function pointer is 3 bytes, the bank third.
 * Caller-saved: everything (`A`, `IX`, flags, `amode`).  Callee-saved: `SP`.
 * Interrupt handlers: vectors are words 1..8 (`jal _isr`), word 0 is `jal
   __sdcc_gsinit_startup`... (`genIVT`).  An ISR saves `A` (`push a`) and `IX`
