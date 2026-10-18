@@ -646,7 +646,9 @@ aopForSym (const iCode *ic, symbol *sym)
 
   // Unlike some other backends we really free asmops; to avoid a double-free, we need to support multiple asmops for the same symbol.
 
-  if (sym && IS_FUNC (sym->type))
+  /* a function (not a parameter declared with a function type: that is a
+     pointer on the stack, see genCall) */
+  if (sym && IS_FUNC (sym->type) && !sym->onStack)
     {
       aop = newAsmop (AOP_IMMD);
       aop->aopu.immd = sym->rname;
@@ -1817,11 +1819,16 @@ genCall (const iCode *ic)
      bank (swap n(sp) is right on the second chip, the only one with banks) */
   const bool banked = IFFUNC_ISBANKEDCALL (ftype);
   const bool a_parm = FUNC_ARGS (ftype) && IS_REGPARM (FUNC_ARGS (ftype)->etype) && !IFFUNC_HASVARARGS (ftype);
+  /* a call through a pointer: PCALL, or a CALL of an object of function
+     type that is not a function - a parameter declared with a function type
+     (adjusted to a pointer: 3 bytes on the stack), whose symbol has no name
+     in the code */
+  const bool indirect = ic->op == PCALL || (!IS_OP_LITERAL (left) && left->aop->type != AOP_IMMD);
   if (banked)
     {
       if (a_parm)
         pushA ();
-      if (ic->op != PCALL)
+      if (!indirect)
         emit2 ("ldi", "#b%s", OP_SYMBOL (left)->rname);
       else if (left->aop->type == AOP_IMMD)
         emit2 ("ldi", "#b%s", left->aop->aopu.immd);
@@ -1838,7 +1845,7 @@ genCall (const iCode *ic)
       aInvalidate ();
     }
 
-  if (ic->op == PCALL)
+  if (indirect)
     {
       /* function pointer: into IX */
       if (left->aop->type == AOP_IMMD)

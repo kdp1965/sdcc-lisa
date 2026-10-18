@@ -60,6 +60,9 @@
 #elif defined(__SDCC_f8)
 #include <asm/f8/features.h>
 
+#elif defined(__SDCC_lisa)
+#include <asm/lisa/features.h>
+
 #else
 /* PENDING */
 #include <asm/default/features.h>
