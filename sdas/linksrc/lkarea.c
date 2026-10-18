@@ -548,6 +548,58 @@ lnkarea(void)
                         lkexit(ER_ERROR);
                 }
         }
+
+        /* sdld lisa: the second chip's banks (ttsky26d RESPIN 22).  The
+           upper half of each space is a window on a bank: code in an area
+           BANKn (#pragma bank n) must sit in bank n (bytes n * 0x8000 ..),
+           and once there are code banks the common code must stay below
+           word 0x4000 (byte 0x8000), where every bank sees it.  Data in an
+           area DBANKn (an __addressmod space) must sit in the window 0x4000
+           .. 0x7fff, and once there is one, ordinary data must stay below
+           0x4000: a switch function leaves the data bank where it put it */
+        if (TARGET_IS_LISA) {
+                int bad = 0, cbanks = 0, dbanks = 0, n;
+                for (ap = areap; ap; ap = ap->a_ap) {
+                        if (ap->a_size == 0)
+                                continue;
+                        if ((ap->a_flag & A_CODE) && sscanf(ap->a_id, "BANK%d", &n) == 1) {
+                                cbanks = 1;
+                                if ((ap->a_addr >> 15) != (a_uint) n || ((ap->a_addr & 0x7FFF) + ap->a_size) > 0x8000) {
+                                        fprintf(stderr, "?ASlink-Error-Code bank area %s at 0x%05lX..0x%05lX is not inside bank %d (bytes 0x%05lX..0x%05lX: -bBANK%d=0x%lX)\n",
+                                                ap->a_id, (long) ap->a_addr, (long) (ap->a_addr + ap->a_size), n,
+                                                (long) n * 0x8000L, (long) n * 0x8000L + 0x7FFF, n, (long) n * 0x8000L);
+                                        bad = 1;
+                                }
+                        }
+                        if (!(ap->a_flag & A_CODE) && sscanf(ap->a_id, "DBANK%d", &n) == 1) {
+                                dbanks = 1;
+                                if (ap->a_addr < 0x4000 || ap->a_addr + ap->a_size > 0x8000) {
+                                        fprintf(stderr, "?ASlink-Error-Data bank area %s at 0x%04lX..0x%04lX is not inside the window 0x4000..0x7fff (-b%s=0x4000)\n",
+                                                ap->a_id, (long) ap->a_addr, (long) (ap->a_addr + ap->a_size), ap->a_id);
+                                        bad = 1;
+                                }
+                        }
+                }
+                for (ap = areap; ap; ap = ap->a_ap) {
+                        if (ap->a_size == 0 || (ap->a_flag & A3_ABS))
+                                continue;
+                        if (cbanks && (ap->a_flag & A_CODE) && sscanf(ap->a_id, "BANK%d", &n) != 1 &&
+                            ap->a_addr + ap->a_size > 0x8000) {
+                                fprintf(stderr, "?ASlink-Error-Common code area %s ends at byte 0x%05lX, beyond word 0x4000: with code banks it must stay in the lower half\n",
+                                        ap->a_id, (long) (ap->a_addr + ap->a_size));
+                                bad = 1;
+                        }
+                        /* (not SSEG, the stack: SP-relative, it follows the stack bank) */
+                        if (dbanks && !(ap->a_flag & A_CODE) && sscanf(ap->a_id, "DBANK%d", &n) != 1 &&
+                            strcmp(ap->a_id, "SSEG") && ap->a_addr + ap->a_size > 0x4000) {
+                                fprintf(stderr, "?ASlink-Error-Data area %s ends at 0x%04lX: with data banks ordinary data must stay below 0x4000\n",
+                                        ap->a_id, (long) (ap->a_addr + ap->a_size));
+                                bad = 1;
+                        }
+                }
+                if (bad)
+                        lkexit(ER_ERROR);
+        }
 }
 
 /* sdld specific */

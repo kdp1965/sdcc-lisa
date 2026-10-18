@@ -685,8 +685,10 @@ aopForSym (const iCode *ic, symbol *sym)
           aop->size = getSize (sym->type);
           /* lda/sta reach 0..0x1ff; FDATA (big objects, __xdata) and an
              __at object beyond that go through IX */
+          /* ... and an object in a named address space (__addressmod: a
+             data bank of the second chip, linked in the window 0x4000 up) */
           aop->aopu.far = (aop->type == AOP_DIR &&
-                           (IN_FARSPACE (SPEC_OCLS (sym->etype)) ||
+                           (IN_FARSPACE (SPEC_OCLS (sym->etype)) || SPEC_ADDRSPACE (sym->etype) ||
                             SPEC_ABSA (sym->etype) && SPEC_ADDR (sym->etype) + aop->size > 0x200));
         }
     }
@@ -754,7 +756,7 @@ aopForRemat (symbol *sym)
       aop->aopu.func = IS_FUNC (OP_SYMBOL (IC_LEFT (ic))->type);
       /* the address of FDATA or of an __at object beyond the direct range */
       aop->aopu.far = !aop->aopu.code &&
-                      (IN_FARSPACE (SPEC_OCLS (OP_SYMBOL (IC_LEFT (ic))->etype)) ||
+                      (IN_FARSPACE (SPEC_OCLS (OP_SYMBOL (IC_LEFT (ic))->etype)) || SPEC_ADDRSPACE (OP_SYMBOL (IC_LEFT (ic))->etype) ||
                        SPEC_ABSA (OP_SYMBOL (IC_LEFT (ic))->etype) && SPEC_ADDR (OP_SYMBOL (IC_LEFT (ic))->etype) + val >= 0x200);
     }
 

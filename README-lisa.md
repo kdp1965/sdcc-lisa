@@ -311,13 +311,55 @@ unsigned int sum(unsigned int a, unsigned int b) __banked;   /* the same attribu
   does not switch banks on an interrupt).  Watch the `.map`: the linker does
   not check it yet.  Constants (`const`, string literals) live in CONST
   whichever file declares them, so a bank's functions may use them.
-* Not banked: data.  The data and stack bank registers (`[p:0x16]`,
-  `[p:0x17]`) exist, and inline assembly or an RTOS may use them, but the
-  compiler has no far data pointers yet.
+* The linker checks the layout: a `BANKn` area must lie inside bank n,
+  and once there is one, every other code area must end below word 0x4000.
 * `sdcc_test/test_bank.c` (+ `test_bank2.c`, `test_bank3.c`; `make check
   REV2=1`) exercises calls from the common area and between banks, byte /
   int / long results, A and stack parameters, 3-byte function pointers and
   recursion across banks.
+
+### Data banks
+
+The data window 0x4000-0x7fff is a view of one of 16 data banks, chosen by
+`[p:0x16]` for every IX-relative access (SP-relative accesses use the stack
+bank `[p:0x17]`, so switching the data bank never moves the stack).  The
+port uses SDCC's named address spaces for it: a space is a switch function
+plus a name, and the compiler calls the function before every access to
+an object of that space.
+
+```c
+__sfr __at(0x216) DATA_BANK;
+static void dbank2(void) { DATA_BANK = 2; }
+__addressmod dbank2 DBANK2;          /* the name is also the object's area */
+
+DBANK2 unsigned char buf[4096];      /* in data bank 2 */
+```
+
+    sdcc -mlisa --rev2 -o prog.ihx prog.c -Wl-bDBANK2=0x4000
+
+* Name the spaces `DBANKn`: the area of a space is its name, linked at
+  0x4000 (`-bDBANKn=0x4000`; several spaces share the window address, each
+  in its own bank).  Their objects are always addressed through IX.
+* The switch function leaves the bank where it put it, so ordinary data
+  (DATA, FDATA, the initialized areas) must stay below 0x4000 once there
+  are data banks; the linker checks it (`--data-loc` / `--xram-loc` keep
+  it low).  The stack is exempt: it is SP-relative.  Exception: a frame
+  bigger than 511 bytes is reached through IX for its far bytes, so keep
+  such frames out of a stack above 0x4000 while data banks are used.
+* The startup neither initializes nor clears objects in a data bank: give
+  them their values at run time.
+* A pointer to a space-qualified type (`DBANK2 unsigned char *p`) is a
+  16-bit window address, and its dereference switches to the space.  A
+  plain pointer does not: it reaches whichever bank was switched in last.
+* The compiler remembers which space it last switched to and skips the
+  switch for the next access to the same space, so code that also writes
+  `[p:0x16]` by hand defeats it (seen in a test: `DATA_BANK = 3; *p`
+  read bank 3).  Switch banks through the spaces only.
+* An interrupt handler that touches a data bank must save and restore
+  `[p:0x16]`: the hardware does not.
+* `sdcc_test/test_dbank.c` (`make check REV2=1`): two spaces in banks 2
+  and 3 at one window address, byte and int objects, a loop, a
+  read-modify-write across the two, ordinary data alongside.
 
 ## Regression testing
 
