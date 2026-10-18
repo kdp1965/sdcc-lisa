@@ -522,6 +522,11 @@ fndsym (char *name)
                   (*aslib_targets[lbfh->type]->loadfile) (lbfh);
 
                   ThisLibr->loaded = 1;
+
+                  /* sdld lisa: the module's debug records (-y) - only the
+                     files named on the command line had theirs copied */
+                  if (aslib_targets[lbfh->type] == &aslib_target_lib)
+                    SDCDBcopy (lbfh->filspc);
                 }
 
               if (numfound == 0)

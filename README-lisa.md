@@ -342,7 +342,10 @@ the sources says `__banked`:
   before).
 * `sdldlisa` takes a library that is a plain list of object files, and a
   line that is an absolute path is the module itself (the NuttX port's
-  `lisa-ar` writes them that way so that a library can be moved).
+  `lisa-ar` writes them that way so that a library can be moved).  With
+  `-y` the `.adb` of such a module goes into the `.cdb` like a file named
+  on the command line (the stock linker merged only those), so lisa_sim
+  and lisa_ide see the library's functions and lines too.
 * The library is the small-model one: the compiler's support routines
   (`__mullong`, the divides, the BF16 helpers) are always plain calls, and
   a program that calls the library's C functions (`printf`, `malloc`, ...)
