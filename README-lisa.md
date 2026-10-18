@@ -350,6 +350,16 @@ the sources says `__banked`:
   libc, so it does not).  Interrupt handlers and `main` need nothing: the
   vectors and crt0 jump into them directly, which works for a function
   without parameters whatever its calling convention.
+* A `static inline` function is emitted only if the file still refers to
+  it after inlining (an address taken, a call the inliner left alone):
+  the helpers of a header that a file never calls cost it nothing.  SDCC
+  used to emit every one of them (NuttX's headers put 10 KB of dead code
+  in each module that way, and their calls dragged the whole kernel into
+  every link).  This holds in every model; `.cdb` entries of the dropped
+  functions remain.
+* A parameter declared with a function type (`void f(fn_t handle)`,
+  `handle(x)`) is a 3-byte pointer on the stack and the call goes
+  through it.
 * `--model-huge` defines `__SDCC_MODEL_HUGE`.  `sdcc_test/test_huge.c`
   (+ `test_huge5.c`, `test_huge6.c`; `make check REV2=1`) is `test_bank.c`
   again without an attribute in sight, plus `__nonbanked` functions and

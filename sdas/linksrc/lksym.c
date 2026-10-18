@@ -169,6 +169,11 @@ newsym(void)
                 ev = eval();
                 if (tsp->s_type & S_DEF &&
                     !(tsp->s_addr == ev && tsp->s_axp && tsp->s_axp->a_bap && ((tsp->s_axp->a_bap->a_flag & A3_ABS) == A3_ABS))) {
+                        /* sdld lisa: the C line labels (--debug) of a static
+                           inline function of a header are defined by every
+                           module that kept a copy of it; the first stands */
+                        if (TARGET_IS_LISA && id[0] == 'C' && id[1] == '$')
+                                goto listed;
                         fprintf(stderr,
                                 "Multiple definition of %s\n", id);
                         lkerr++;
@@ -187,6 +192,7 @@ newsym(void)
         /*
          * Place pointer in header symbol list
          */
+listed:
         nsym = hp->h_nsym;
         s = hp->s_list;
         for (i=0; i < nsym ;++i) {

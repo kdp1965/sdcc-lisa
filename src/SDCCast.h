@@ -207,6 +207,7 @@ ast *replaceAstWithTemporary (ast ** treeptr);
 ast *createRMW (ast *, unsigned, ast *);
 symbol * createFunctionDecl (symbol *);
 ast *createFunction (symbol *, ast *);
+void emitStaticInlineCode (void);
 ast *createBlock (symbol *, ast *);
 ast *createLabel (symbol *, ast *);
 ast *createCase (ast *, ast *, ast *);

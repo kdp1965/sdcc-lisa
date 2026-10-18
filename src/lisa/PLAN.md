@@ -73,7 +73,15 @@ with the stack handling of the stm8/z80 ports.
   `IFFUNC_ISBANKEDCALL`, which the port's decisions all go through) and
   `--codeseg BANKn` places a file (lisa_finaliseOptions adds the CODE
   flag); the support routines stay plain calls, so the small-model
-  library serves.
+  library serves (`device/include/asm/lisa/features.h` makes
+  `__SDCC_NONBANKED` `__nonbanked` for the library headers).  For NuttX
+  (lisa-nuttx: `arch/lisa`): the huge model's data is far by default,
+  `static inline` functions are emitted only when referenced
+  (SDCCast.c `emitStaticInlineCode`, called from `emitMaps` once the
+  initializers are resolved), a function-typed parameter is a pointer
+  (`aopForSym`, genCall's `indirect`), `sdldlisa` takes absolute module
+  paths in list libraries and refuses a DATA/INITIALIZED/OSEG area past
+  0x200.
 * Caller-saved: everything (`A`, `IX`, flags, `amode`).  Callee-saved: `SP`.
 * Interrupt handlers: vectors are words 1..8 (`jal _isr`), word 0 is `jal
   __sdcc_gsinit_startup`... (`genIVT`).  An ISR saves `A` (`push a`) and `IX`

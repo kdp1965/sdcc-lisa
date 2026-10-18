@@ -2073,6 +2073,12 @@ emitMaps (void)
     }
   dbuf_tprintf (&code->oBuf, "\t!area\n", c_abs->sname);
   emitStaticSeg (c_abs, &code->oBuf);
+
+  /* the static inline functions that are referenced - now that the
+     initializers above have been resolved too (a function pointer table
+     naming one): back in the code area */
+  dbuf_tprintf (&code->oBuf, "\t!areacode\n", options.code_seg);
+  emitStaticInlineCode ();
   inInitMode--;
 }
 

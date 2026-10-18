@@ -7590,6 +7590,30 @@ createFunctionDecl (symbol *name)
   return name;
 }
 
+/* The code of the static inline functions, each kept apart until the end
+   of the translation unit tells whether the function is referenced */
+typedef struct
+{
+  symbol *sym;
+  struct dbuf_s buf;
+} staticInlineCode;
+
+static set *staticInlineCodes = NULL;
+
+/*-----------------------------------------------------------------*/
+/* emitStaticInlineCode - append the code of the static inline     */
+/*   functions still referenced to the code segment (before glue)  */
+/*-----------------------------------------------------------------*/
+void
+emitStaticInlineCode (void)
+{
+  staticInlineCode *sic;
+
+  for (sic = setFirstItem (staticInlineCodes); sic; sic = setNextItem (staticInlineCodes))
+    if (sic->sym->isref)
+      dbuf_append (&code->oBuf, dbuf_get_buf (&sic->buf), dbuf_get_length (&sic->buf));
+}
+
 /*-----------------------------------------------------------------*/
 /* createFunction - This is the key node that calls the iCode for  */
 /*                  generating the code for a function. Note code  */
@@ -7703,7 +7727,21 @@ createFunction (symbol * name, ast * body)
 
   /* create the node & generate intermediate code */
   GcurMemmap = code;
-  codeOutBuf = &code->oBuf;
+  if (FUNC_ISINLINE (name->type) && IS_STATIC (fetype) && !IS_EXTERN (fetype))
+    {
+      /* a static inline function: its code into a buffer of its own, kept
+         only when the function is still referenced at the end of the
+         translation unit (emitStaticInlineCode) - an address taken, a call
+         the inliner left alone.  The helpers of a header that a file never
+         calls cost it nothing. */
+      staticInlineCode *sic = Safe_alloc (sizeof (*sic));
+      sic->sym = name;
+      dbuf_init (&sic->buf, 1024);
+      addSet (&staticInlineCodes, sic);
+      codeOutBuf = &sic->buf;
+    }
+  else
+    codeOutBuf = &code->oBuf;
   piCode = iCodeFromAst (ex);
   name->generated = 1;
 
