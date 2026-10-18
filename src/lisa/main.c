@@ -551,7 +551,7 @@ get_model (void)
     $L is the list of extra options that should be passed on the command line...
     MUST be terminated with a NULL.
 */
-/* #pragma bank n: the functions of this file go to the code area BANKn,
+/* #pragma bank n (1..63: the code bank register is 6 bits): the functions of this file go to the code area BANKn,
    which the link puts in code bank n (-Wl-bBANKn=<byte n * 0x8000>;
    RESPIN 22 of ttsky26d-um-lisa-ttlc): called through
    ___sdcc_bcall when declared __banked.  BASE (or 0) is the common area
@@ -578,7 +578,7 @@ do_pragma (int id, const char *name, const char *cp)
 
         dbuf_init (&buffer, 32);
         cp = get_pragma_token (cp, &token);
-        if (token.type == TOKEN_INT && token.val.int_val >= 1 && token.val.int_val <= 15)
+        if (token.type == TOKEN_INT && token.val.int_val >= 1 && token.val.int_val <= 63)
           dbuf_printf (&buffer, "BANK%d (CODE)", token.val.int_val);
         else if (token.type == TOKEN_INT && token.val.int_val == 0)
           dbuf_append_str (&buffer, "CODE (CODE)");

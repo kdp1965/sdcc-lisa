@@ -274,7 +274,7 @@ are listed in `lisa_isa.md` ("TT07 interrupt notes").
 ## Code banks (the second chip, `--rev2`)
 
 The second chip (ttsky26d-um-lisa-ttlc, RESPIN.md item 22) makes the upper
-16K words of the code space a window on one of 16 banks, chosen by the
+16K words of the code space a window on one of 64 banks, chosen by the
 code bank register `[p:0x15]` (reset 1 = the plain 32K layout; `lisa_isa.md`
 "Bank registers").  The port uses it for functions declared `__banked`:
 
@@ -291,7 +291,7 @@ unsigned int sum(unsigned int a, unsigned int b) __banked;   /* the same attribu
     sdcc -mlisa --rev2 -c bank2.c                                 # one source per run
     sdcc -mlisa --rev2 -o prog.ihx main.c bank2.rel -Wl-bBANK2=0x10000
 
-* `#pragma bank n` (1..15; 0 or BASE = the common area CODE again) names the
+* `#pragma bank n` (1..63; 0 or BASE = the common area CODE again) names the
   area `BANKn`; the link option `-bBANKn=<byte n * 0x8000>` puts it at word
   0x4000 of bank n (the Intel HEX then has type-04 records, which lisa_sim,
   lisa_pydb, the testbench's ihx2hex.py and ttlc_io.py read).  The linker
