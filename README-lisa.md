@@ -222,6 +222,32 @@ vector `jal` leaves RA alone, the core's `isr_jump`) and `cflag_save` (the
 code never changes `amode` (it is not readable or shadowed), so a handler
 can use everything.
 
+### An interrupt-driven receiver (the second chip)
+
+The console UART status (0x211) has bit 0 "data available", bit 1 "TX
+buffer empty" and, on the second chip, bit 2 "overrun" (a byte arrived
+with the 8-byte receive FIFO full; it clears once the FIFO has been read
+empty).  The UART interrupt (`__interrupt(LISA_INT_UART1)`, enable bit 0 of
+0x214 and `INT_UART1` in `INT_ENABLE`) is raised on the rising edge of
+"data available" (and of "TX empty" if bit 1 of 0x214 is set), so a
+receive handler acknowledges first and then drains:
+
+```c
+void uart_isr(void) __interrupt(LISA_INT_UART1)
+{
+  INT_STATUS = INT_UART1;                 /* ack before the drain: an edge during it is not lost */
+  while (UART_STATUS & 1) {
+    unsigned char c = UART_TX;
+    ... ring buffer ...
+  }
+  if (UART_STATUS & 4) overruns++;        /* bytes were lost before this handler ran */
+}
+```
+
+The second chip takes interrupts only between whole instructions (never
+inside `ldx`, a two-stage opcode or a predicate), so this is safe in C;
+on TT07 it is not (below).
+
 ### Interrupts on TT07
 
 The TT07 silicon samples an interrupt in the same cycle that executes an
