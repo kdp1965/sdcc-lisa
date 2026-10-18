@@ -583,6 +583,15 @@ lnkarea(void)
                 for (ap = areap; ap; ap = ap->a_ap) {
                         if (ap->a_size == 0 || (ap->a_flag & A3_ABS))
                                 continue;
+                        /* the direct lda/sta forms reach 0..0x1ff: the areas the
+                           compiler addresses that way must end there */
+                        if (!(ap->a_flag & A_CODE) &&
+                            (!strcmp(ap->a_id, "DATA") || !strcmp(ap->a_id, "INITIALIZED") || !strcmp(ap->a_id, "OSEG")) &&
+                            ap->a_addr + ap->a_size > 0x200) {
+                                fprintf(stderr, "?ASlink-Error-Direct data area %s ends at 0x%04lX, beyond the 512 bytes lda/sta reach (big objects __xdata, or --model-huge)\n",
+                                        ap->a_id, (long) (ap->a_addr + ap->a_size));
+                                bad = 1;
+                        }
                         if (cbanks && (ap->a_flag & A_CODE) && sscanf(ap->a_id, "BANK%d", &n) != 1 &&
                             ap->a_addr + ap->a_size > 0x8000) {
                                 fprintf(stderr, "?ASlink-Error-Common code area %s ends at byte 0x%05lX, beyond word 0x4000: with code banks it must stay in the lower half\n",

@@ -334,6 +334,15 @@ the sources says `__banked`:
   default - a call to one below word 0x4000 switches the bank for nothing,
   that is all).  All function pointers are 3 bytes unless their type says
   `__nonbanked`; `sizeof` tells.
+* Its data is far: a program that size has more small globals than the
+  512 bytes the direct `lda`/`sta` reach, so every global goes to FDATA /
+  FINITIALIZED through IX unless declared `__data` (the small model keeps
+  objects under 64 bytes in DATA, and the linker now refuses a DATA,
+  INITIALIZED or OSEG area that ends beyond 0x200 - a silent truncation
+  before).
+* `sdldlisa` takes a library that is a plain list of object files, and a
+  line that is an absolute path is the module itself (the NuttX port's
+  `lisa-ar` writes them that way so that a library can be moved).
 * The library is the small-model one: the compiler's support routines
   (`__mullong`, the divides, the BF16 helpers) are always plain calls, and
   a program that calls the library's C functions (`printf`, `malloc`, ...)

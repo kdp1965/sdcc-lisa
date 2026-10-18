@@ -393,7 +393,15 @@ lisa_finaliseOptions (void)
     }
   /* --model-huge: every function is called through ___sdcc_bcall unless
      __nonbanked (SDCCsymt.h BANKED_FUNCTIONS); the support routines stay
-     plain */
+     plain.  Its data is far too: a program that size has more small
+     globals than the 512 bytes the direct lda/sta reach (DATA, INITIALIZED),
+     so they all go to FDATA / FINITIALIZED through IX unless declared
+     __near / __data (SDCCmem.c allocGlobal: the xdata default) */
+  if (options.model == MODEL_HUGE)
+    {
+      port->mem.default_local_map = xdata;
+      port->mem.default_globl_map = xdata;
+    }
   if (lisa_tt07_cache)
     {
       if (options.stack_loc < 0)

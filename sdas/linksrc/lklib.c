@@ -72,7 +72,10 @@ buildlibraryindex_lib (struct lbname *lbnh, FILE * libfp, pmlibraryfile This, in
 
       if ((relfil[0] == '/') || (relfil[0] == LKDIRSEP))
         {
-          strcat (str, relfil + 1);
+          /* sdld lisa: an absolute path names the module itself (the
+             NuttX port's list libraries are written that way, so that
+             they can be moved) */
+          strcpy (str, relfil);
         }
       else
         {
@@ -147,7 +150,10 @@ fndsym_lib (const char *name, struct lbname *lbnh, FILE * libfp, int type)
 
       if ((relfil[0] == '/') || (relfil[0] == LKDIRSEP))
         {
-          strcat (str, relfil + 1);
+          /* sdld lisa: an absolute path names the module itself (the
+             NuttX port's list libraries are written that way, so that
+             they can be moved) */
+          strcpy (str, relfil);
         }
       else
         {
