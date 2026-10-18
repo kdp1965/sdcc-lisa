@@ -4899,13 +4899,17 @@ initBuiltIns ()
     }
 
   /* initialize memcpy symbol for struct assignment */
+  /* lisa: the C memcpy itself (the same calling convention), so that a
+     program with a memcpy of its own (an operating system's libc) serves
+     the struct copies in the huge model too, where __memcpy would be a
+     second, banked copy of the library's */
   builtin_memcpy = findSym (SymbolTab, NULL, "__builtin_memcpy");
-  nonbuiltin_memcpy = findSym (SymbolTab, NULL, "__memcpy");
+  nonbuiltin_memcpy = findSym (SymbolTab, NULL, TARGET_IS_LISA ? "memcpy" : "__memcpy");
 
   if (!nonbuiltin_memcpy)
     {
       const char *argTypeStrs[] = {"vg*", "Cvg*", "Ui"};
-      nonbuiltin_memcpy = funcOfTypeVarg ("__memcpy", "vg*", 3, argTypeStrs);
+      nonbuiltin_memcpy = funcOfTypeVarg (TARGET_IS_LISA ? "memcpy" : "__memcpy", "vg*", 3, argTypeStrs);
       FUNC_ISBUILTIN (nonbuiltin_memcpy->type) = 0;
       FUNC_ISREENT (nonbuiltin_memcpy->type) = options.stackAuto;
     }

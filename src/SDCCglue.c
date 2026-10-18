@@ -812,7 +812,12 @@ _printPointerType (struct dbuf_s *oBuf, const char *name, int size)
     }
   else if (size == 3)
     {
-      if (port->little_endian)
+      if (TARGET_IS_LISA)
+        /* a banked function pointer: the window address and the function's
+           code bank equate (lisa_isa.md "Bank registers"); the linker has
+           no third byte of a 15-bit code address to give */
+        dbuf_printf (oBuf, "\t.byte %s, (%s >> 8), b%s", name, name, name);
+      else if (port->little_endian)
         dbuf_printf (oBuf, "\t.byte %s, (%s >> 8), (%s >> 16)", name, name, name);
       else
         dbuf_printf (oBuf, "\t.byte (%s >> 16), (%s >> 8), %s", name, name, name);

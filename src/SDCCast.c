@@ -31,6 +31,8 @@
 #include "SDCCbtree.h"
 #include "SDCCset.h"
 
+static void noteSymRef (symbol *sym);
+
 int currLineno = 0;
 set *astList = NULL;
 set *operKeyReset = NULL;
@@ -3537,6 +3539,7 @@ decorateType (ast *tree, RESULT_TYPE resultType, bool reduceTypeAllowed)
 
               /* and mark the symbol as referenced */
               tree->opval.val->sym->isref = 1;
+              noteSymRef (tree->opval.val->sym);
             }
         }
       else
@@ -7591,27 +7594,133 @@ createFunctionDecl (symbol *name)
 }
 
 /* The code of the static inline functions, each kept apart until the end
-   of the translation unit tells whether the function is referenced */
+   of the translation unit tells whether the function is referenced by
+   code that is emitted.  The references to global symbols are noted as
+   the bodies are resolved (noteSymRef), each from the function being
+   compiled (currFunc), or from an initializer (none). */
 typedef struct
 {
   symbol *sym;
   struct dbuf_s buf;
+  bool kept;
 } staticInlineCode;
 
+typedef struct
+{
+  symbol *from;
+  symbol *to;
+} symRef;
+
 static set *staticInlineCodes = NULL;
+static set *symRefs = NULL;
+
+extern set *externs;            /* SDCCglue.c: the externs .globl'd */
+extern set *publics;            /* SDCCglue.c: the publics, used externals among them */
+
+static staticInlineCode *
+findStaticInlineCode (const symbol *sym)
+{
+  staticInlineCode *sic;
+
+  for (sic = setFirstItem (staticInlineCodes); sic; sic = setNextItem (staticInlineCodes))
+    if (sic->sym == sym)
+      return sic;
+  return NULL;
+}
+
+/*-----------------------------------------------------------------*/
+/* noteSymRef - a reference to a global symbol from the code being */
+/*   resolved                                                      */
+/*-----------------------------------------------------------------*/
+static void
+noteSymRef (symbol *sym)
+{
+  symRef *ref;
+
+  if (!sym || sym->level != 0 || sym == currFunc)
+    return;
+
+  ref = Safe_alloc (sizeof (*ref));
+  ref->from = currFunc;
+  ref->to = sym;
+  addSet (&symRefs, ref);
+}
+
+/* a reference from code that is emitted: from an initializer, from a
+   function that is not a static inline one, or from one that is kept */
+static bool
+refIsLive (const symRef *ref)
+{
+  staticInlineCode *from = ref->from ? findStaticInlineCode (ref->from) : NULL;
+
+  return !from || from->kept;
+}
+
+/* sym is referenced, and only by static inline functions that are dropped */
+static bool
+refsDeadOnly (const symbol *sym)
+{
+  symRef *ref;
+  bool referenced = false;
+
+  for (ref = setFirstItem (symRefs); ref; ref = setNextItem (symRefs))
+    if (ref->to == sym)
+      {
+        if (refIsLive (ref))
+          return false;
+        referenced = true;
+      }
+  return referenced;
+}
 
 /*-----------------------------------------------------------------*/
 /* emitStaticInlineCode - append the code of the static inline     */
-/*   functions still referenced to the code segment (before glue)  */
+/*   functions that emitted code refers to (to a fixed point), and */
+/*   forget the externs only the dropped ones referred to          */
 /*-----------------------------------------------------------------*/
 void
 emitStaticInlineCode (void)
 {
   staticInlineCode *sic;
+  symRef *ref;
+  symbol *sym;
+  set *dropped = NULL;
+  bool changed = true;
+
+  while (changed)
+    {
+      changed = false;
+      for (ref = setFirstItem (symRefs); ref; ref = setNextItem (symRefs))
+        {
+          sic = findStaticInlineCode (ref->to);
+          if (sic && !sic->kept && refIsLive (ref))
+            {
+              sic->kept = true;
+              changed = true;
+            }
+        }
+    }
 
   for (sic = setFirstItem (staticInlineCodes); sic; sic = setNextItem (staticInlineCodes))
-    if (sic->sym->isref)
+    if (sic->kept)
       dbuf_append (&code->oBuf, dbuf_get_buf (&sic->buf), dbuf_get_length (&sic->buf));
+
+  /* an extern that only dropped code referred to would be an undefined
+     global of the link: out of the externs, and out of the publics (a
+     used function without a body is listed there) */
+  for (sym = setFirstItem (externs); sym; sym = setNextItem (externs))
+    if (refsDeadOnly (sym))
+      addSet (&dropped, sym);
+  for (sym = setFirstItem (dropped); sym; sym = setNextItem (dropped))
+    deleteSetItem (&externs, sym);
+  deleteSet (&dropped);
+
+  for (sym = setFirstItem (publics); sym; sym = setNextItem (publics))
+    if (IS_FUNC (sym->type) && !IFFUNC_HASBODY (sym->type) && refsDeadOnly (sym))
+      addSet (&dropped, sym);
+  for (sym = setFirstItem (dropped); sym; sym = setNextItem (dropped))
+    deleteSetItem (&publics, sym);
+  deleteSet (&dropped);
 }
 
 /*-----------------------------------------------------------------*/

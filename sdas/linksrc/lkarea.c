@@ -851,7 +851,11 @@ setarea(void)
                         if (ap == NULL) {
                                 fprintf(stderr,
                                 "ASlink-Warning-No definition of area %s\n", id);
-                                lkerr++;
+                                /* sdld lisa: a -b for a code bank no module
+                                   uses (a bank map's spare banks) is a
+                                   warning, not an error */
+                                if (!(TARGET_IS_LISA && !strncmp(id, "BANK", 4)))
+                                        lkerr++;
                         } else {
                                 ap->a_addr = v;
                                 ap->a_bset = 1;
