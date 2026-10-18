@@ -68,7 +68,12 @@ with the stack handling of the stm8/z80 ports.
   SDCC's parameter layout applies; the return slot needs the same shift).
   The caller pushes the bank byte (`b_<f>`, equated by the definition from
   `#pragma bank`'s area BANKn) before the call and drops it after; a
-  banked function pointer is 3 bytes, the bank third.
+  banked function pointer is 3 bytes, the bank third.  `--model-huge`
+  makes every function a banked call unless `__nonbanked` (SDCCsymt.h
+  `IFFUNC_ISBANKEDCALL`, which the port's decisions all go through) and
+  `--codeseg BANKn` places a file (lisa_finaliseOptions adds the CODE
+  flag); the support routines stay plain calls, so the small-model
+  library serves.
 * Caller-saved: everything (`A`, `IX`, flags, `amode`).  Callee-saved: `SP`.
 * Interrupt handlers: vectors are words 1..8 (`jal _isr`), word 0 is `jal
   __sdcc_gsinit_startup`... (`genIVT`).  An ISR saves `A` (`push a`) and `IX`

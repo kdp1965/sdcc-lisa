@@ -383,6 +383,17 @@ lisa_finaliseOptions (void)
     }
   if (lisa_rev2)
     addSet (&preArgvSet, Safe_strdup ("-D__SDCC_LISA_REV2"));
+  /* --codeseg BANKn (a code bank of the second chip, as #pragma bank n):
+     the area wants its CODE flag */
+  if (options.code_seg && !strncmp (options.code_seg, "BANK", 4) && isdigit ((unsigned char) options.code_seg[4]) && !strchr (options.code_seg, ' '))
+    {
+      char *seg = Safe_alloc (strlen (options.code_seg) + 8);
+      sprintf (seg, "%s (CODE)", options.code_seg);
+      options.code_seg = seg;
+    }
+  /* --model-huge: every function is called through ___sdcc_bcall unless
+     __nonbanked (SDCCsymt.h BANKED_FUNCTIONS); the support routines stay
+     plain */
   if (lisa_tt07_cache)
     {
       if (options.stack_loc < 0)
@@ -644,8 +655,8 @@ PORT lisa_port =
   {
     glue,
     true,
-    NO_MODEL,
-    NO_MODEL,
+    MODEL_SMALL | MODEL_HUGE,   /* --model-huge: every function banked unless __nonbanked (the second chip) */
+    MODEL_SMALL,
     &get_model,
   },
   {                             /* Assembler */

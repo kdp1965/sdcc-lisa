@@ -318,6 +318,34 @@ unsigned int sum(unsigned int a, unsigned int b) __banked;   /* the same attribu
   int / long results, A and stack parameters, 3-byte function pointers and
   recursion across banks.
 
+### The huge model
+
+A program too large to annotate function by function (an operating system
+and its applications) is built with `--model-huge`: every function is then
+a banked call unless it is declared `__nonbanked`, and a source goes to a
+code bank with `--codeseg BANKn` instead of `#pragma bank` - nothing in
+the sources says `__banked`:
+
+    sdcc -mlisa --rev2 --model-huge --codeseg BANK5 -c lib.c
+    sdcc -mlisa --rev2 --model-huge -o prog.ihx main.c lib.rel -Wl-bBANK5=0x28000
+
+* The functions of a file compiled without `--codeseg` go to CODE (the
+  common area; their equate `b_f` is 1, the bank that the window shows by
+  default - a call to one below word 0x4000 switches the bank for nothing,
+  that is all).  All function pointers are 3 bytes unless their type says
+  `__nonbanked`; `sizeof` tells.
+* The library is the small-model one: the compiler's support routines
+  (`__mullong`, the divides, the BF16 helpers) are always plain calls, and
+  a program that calls the library's C functions (`printf`, `malloc`, ...)
+  must declare them `__nonbanked` (an operating system brings its own
+  libc, so it does not).  Interrupt handlers and `main` need nothing: the
+  vectors and crt0 jump into them directly, which works for a function
+  without parameters whatever its calling convention.
+* `--model-huge` defines `__SDCC_MODEL_HUGE`.  `sdcc_test/test_huge.c`
+  (+ `test_huge5.c`, `test_huge6.c`; `make check REV2=1`) is `test_bank.c`
+  again without an attribute in sight, plus `__nonbanked` functions and
+  pointers.
+
 ### Data banks
 
 The data window 0x4000-0x7fff is a view of one of 16 data banks, chosen by

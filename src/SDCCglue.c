@@ -2168,7 +2168,7 @@ printPublics (FILE * afile)
 
   for (sym = setFirstItem (publics); sym; sym = setNextItem (publics))
     {
-      if ((TARGET_Z80_LIKE || TARGET_IS_LISA) && IFFUNC_BANKED(sym->type))
+      if (TARGET_Z80_LIKE && IFFUNC_BANKED(sym->type) || TARGET_IS_LISA && IFFUNC_ISBANKEDCALL(sym->type))
         {
           /* TODO: use template for bank symbol generation */
           sprintf (buffer, "b%s", sym->rname);

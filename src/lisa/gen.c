@@ -1441,7 +1441,7 @@ setupFrame (const iCode *ic)
      generic code lays the parameters out 3 bytes deeper (the port's
      stack.banked_overhead), the return slot is at that depth too */
   G.stack.param_offset = spTop () + G.stack.ret_size;
-  G.stack.ret_base = spTop () + (IFFUNC_BANKED (ftype) ? 3 : 0);
+  G.stack.ret_base = spTop () + (IFFUNC_ISBANKEDCALL (ftype) ? 3 : 0);
   G.stack.locals_base = 0;
   G.ra_saved = false;
   ixInvalidate ();
@@ -1481,9 +1481,9 @@ genFunction (iCode *ic)
   emit2 (";", " Function %s", sym->name);
   emit2 (";", "---------------------------------");
 
-  if (IFFUNC_BANKED (ftype))
+  if (IFFUNC_ISBANKEDCALL (ftype))
     {
-      /* its bank for ___sdcc_bcall: #pragma bank's (the area BANKn), else
+      /* its bank for ___sdcc_bcall: #pragma bank's / --codeseg's (the area BANKn), else
          1 - the upper half of the default layout, or below 0x4000 where
          the bank does not matter */
       int bank = 1;
