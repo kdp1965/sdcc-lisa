@@ -263,6 +263,7 @@ struct  mne     mne[] = {
 
         /* divider */
     {   NULL,   "lddiv",        S_LDDIV,        0,      0xA170    },
+    {   NULL,   "divc",         S_INH,          0,      0xA174    },   /* rev 2: {ix, a} / the last divisor -> a, ix (RESPIN 27) */
     {   NULL,   "div",          S_DIVREM,       0,      0xA300    },
     {   NULL,   "rem",          S_DIVREM,       0,      0xA310    },
 

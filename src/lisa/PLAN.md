@@ -238,7 +238,8 @@ loop's `dcx`).  Unsigned `/` and `%` on the hardware divider inline
 (probed with `test_divprobe.c`, `lisa_isa.md` divider notes): the
 result's high byte is not stored; the forms with offset bit 1 clear (or
 `div 1`) write the low byte to a stray address (only `div 3` and the
-slot at 2(sp) are emitted); every division leaves IX = 0 and RA = the
+slot at 2(sp) are emitted); every division leaves IX = 0 (the second chip:
+the remainder, ttsky26d RESPIN 27, with `divc` for long divisions) and RA = the
 16-bit result (`xchg ra; txau; andi #0x7f` gives the high byte; every
 division is an RA clobber for the prologue), 15 bits of it: a quotient
 by 1 has no high byte there and a remainder of 0x8000 or more loses its
