@@ -497,6 +497,23 @@ lnkarea(void)
                         sp->s_addr = ap->a_size;
                         sp->s_axp = NULL;
                         sp->s_type |= S_DEF;
+
+                        /* sdld lisa: k_<area> for a KDATA area, the code bank
+                           it is in (its byte address / 0x8000), what the
+                           startup writes to KB (0x21F) before reading it
+                           with lda (ix++); the area must not cross a bank */
+                        if (TARGET_IS_LISA && (ap->a_flag & A_KDATA)) {
+                                *temp = 'k';
+                                sp = lkpsym(temp, 1);
+                                sp->s_addr = ap->a_addr >> 15;
+                                sp->s_axp = NULL;
+                                sp->s_type |= S_DEF;
+                                if (ap->a_size && (ap->a_addr >> 15) != ((ap->a_addr + ap->a_size - 1) >> 15)) {
+                                        fprintf(stderr, "?ASlink-Error-KDATA area %s crosses a code bank (0x%lx .. 0x%lx)\n",
+                                                ap->a_id, (unsigned long) ap->a_addr, (unsigned long) (ap->a_addr + ap->a_size - 1));
+                                        lkerr++;
+                                }
+                        }
                 }
 
                 if (is_sdld() && !(TARGET_IS_Z80 || TARGET_IS_Z180 || TARGET_IS_GB)) {
@@ -592,7 +609,9 @@ lnkarea(void)
                                         ap->a_id, (long) (ap->a_addr + ap->a_size));
                                 bad = 1;
                         }
-                        if (cbanks && (ap->a_flag & A_CODE) && sscanf(ap->a_id, "BANK%d", &n) != 1 &&
+                        /* a KDATA area (packed constants, RESPIN 26) lives in
+                           any bank: lda (ix++) reads it through KB */
+                        if (cbanks && (ap->a_flag & A_CODE) && !(ap->a_flag & A_KDATA) && sscanf(ap->a_id, "BANK%d", &n) != 1 &&
                             ap->a_addr + ap->a_size > 0x8000) {
                                 fprintf(stderr, "?ASlink-Error-Common code area %s ends at byte 0x%05lX, beyond word 0x4000: with code banks it must stay in the lower half\n",
                                         ap->a_id, (long) (ap->a_addr + ap->a_size));

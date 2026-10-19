@@ -53,6 +53,7 @@ struct  mne     mne[] = {
     {   NULL,   "XDATA",        S_ATYP,         0,      A_XDATA },
     {   NULL,   "BIT",          S_ATYP,         0,      A_BIT   },
     {   NULL,   "CDATA",        S_ATYP,         0,      A_CDATA },
+    {   NULL,   "KDATA",        S_ATYP,         0,      A_KDATA },
 
     {   NULL,   ".page",        S_PAGE,         0,      0       },
     {   NULL,   ".title",       S_HEADER,       0,      O_TITLE },

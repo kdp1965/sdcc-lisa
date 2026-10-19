@@ -583,7 +583,7 @@ immArg (const asmop *aop, int offset)
   wassert_bt (aop->type == AOP_IMMD);
   /* code space objects are two words per byte: a byte offset o is 4*o in the
      assembler's byte-counted code addresses */
-  int off = aop->aopu.code && !aop->aopu.func ? 4 * aop->aopu.immd_off : aop->aopu.immd_off;
+  int off = aop->aopu.code && !aop->aopu.func && !lisa_pack_const ? 4 * aop->aopu.immd_off : aop->aopu.immd_off;   /* a pair per byte, or packed */
   if (offset == 0)
     SNPRINTF (buffer, sizeof (buffer), "#<(%s + %d)", aop->aopu.immd, off);
   else if (offset == 1)
@@ -905,8 +905,9 @@ static void
 ixLoadSym (const asmop *aop, int offset)
 {
   wassert_bt (aop->type == AOP_DIR || aop->type == AOP_IMMD || aop->type == AOP_CODE);
-  /* constant data in code space: 4 bytes (two words) per byte */
-  int off = (aop->aopu.code && !aop->aopu.func) ? 4 * (aop->aopu.immd_off + offset) : aop->aopu.immd_off + offset;
+  /* constant data in code space: 4 bytes (two words) per byte, or one
+     byte packed (--pack-const: the linker gives the byte offset) */
+  int off = (aop->aopu.code && !aop->aopu.func && !lisa_pack_const) ? 4 * (aop->aopu.immd_off + offset) : aop->aopu.immd_off + offset;
   if (G.ix.type == AOP_IMMD && G.ix.base && !strcmp (G.ix.base, aop->aopu.immd) && G.ix.offset == off)
     return;
   if (off)
@@ -4234,6 +4235,8 @@ ixNoteStore (const asmop *aop, int offset)
 static void
 ixCodePtrToWord (void)
 {
+  if (lisa_pack_const)          /* packed: the pointer is the byte offset lda (ix++) takes (bit 15 ignored) */
+    return;
   emit2 ("txau", "");
   emit2 ("andi", "#0x7f");
   emit2 ("addaxu", "");
@@ -4249,17 +4252,25 @@ codeReadToResult (const asmop *result, int off, int size)
 {
   if (off)
     {
-      emit2 ("adx", "#%d", 2 * off);
+      emit2 ("adx", "#%d", lisa_pack_const ? off : 2 * off);
       cost (1, 1);
     }
   for (int i = 0; i < size; i++)
     {
-      emit2 ("call", "ix");
-      cost (1, 4);
-      if (i < size - 1)
+      if (lisa_pack_const)
         {
-          emit2 ("adx", "#1");
-          cost (1, 1);
+          emit2 ("lda", "(ix++)");          /* the byte, IX on the next */
+          cost (1, 2);
+        }
+      else
+        {
+          emit2 ("call", "ix");
+          cost (1, 4);
+          if (i < size - 1)
+            {
+              emit2 ("adx", "#1");
+              cost (1, 1);
+            }
         }
       storeA (result, i);
     }
@@ -4578,17 +4589,25 @@ genPointerPush (const iCode *ic)
         ixLoadSym (&code, 0);
         if (size - 1)
           {
-            emit2 ("adx", "#%d", 2 * (size - 1));
+            emit2 ("adx", "#%d", lisa_pack_const ? size - 1 : 2 * (size - 1));
             cost (1, 1);
           }
         for (int i = size - 1; i >= 0; i--)
           {
-            emit2 ("call", "ix");
-            cost (1, 4);
+            if (lisa_pack_const)
+              {
+                emit2 ("lda", "(ix++)");
+                cost (1, 2);
+              }
+            else
+              {
+                emit2 ("call", "ix");
+                cost (1, 4);
+              }
             pushA ();
             if (i)
               {
-                emit2 ("adx", "#-3");
+                emit2 ("adx", "#%d", lisa_pack_const ? -2 : -3);
                 cost (1, 1);
               }
           }
@@ -4615,17 +4634,25 @@ genPointerPush (const iCode *ic)
     ixCodePtrToWord ();
     if (off + size - 1)
       {
-        emit2 ("adx", "#%d", 2 * (off + size - 1));
+        emit2 ("adx", "#%d", lisa_pack_const ? off + size - 1 : 2 * (off + size - 1));
         cost (1, 1);
       }
     for (int i = size - 1; i >= 0; i--)
       {
-        emit2 ("call", "ix");
-        cost (1, 4);
+        if (lisa_pack_const)
+          {
+            emit2 ("lda", "(ix++)");
+            cost (1, 2);
+          }
+        else
+          {
+            emit2 ("call", "ix");
+            cost (1, 4);
+          }
         pushA ();
         if (i)
           {
-            emit2 ("adx", "#-3");
+            emit2 ("adx", "#%d", lisa_pack_const ? -2 : -3);
             cost (1, 1);
           }
       }

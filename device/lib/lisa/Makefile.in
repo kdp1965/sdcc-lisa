@@ -18,7 +18,10 @@ LISASRC = $(srcdir)/../lisa
 vpath %.s $(LISASRC)
 vpath %.c $(LISASRC)
 
-EXTRA_CFLAGS = -mlisa $(if $(filter lisa-cache,$(MODEL)),--tt07-cache) $(if $(filter lisa-rev2,$(MODEL)),--rev2)
+EXTRA_CFLAGS = -mlisa $(if $(filter lisa-cache,$(MODEL)),--tt07-cache) $(if $(filter lisa-rev2,$(MODEL)),--rev2) $(if $(filter lisa-rev2k,$(MODEL)),--pack-const)
+# lisa-rev2k: constants packed (--pack-const, ttsky26d RESPIN 26) - the
+# helpers that walk constant data take the k variants
+K = $(if $(filter lisa-rev2k,$(MODEL)),k)
 
 SAS = $(top_builddir)/bin/sdaslisa
 
@@ -86,8 +89,8 @@ LISAOBJECTS = $(patsubst %.c,%.rel,$(LISA_FLOAT) $(LISA_INT) $(LISA_LONG) $(LISA
 
 # memcpy (with __memcpy), memset, strcpy, strlen and strcmp are assembly: a
 # loop per space of the generic source, the pointers swapped through IX
-OBJ = setjmp.rel atomic_flag_test_and_set.rel heap.rel divu.rel divul.rel gptrget.rel bf16.rel bf16add.rel bf16c.rel \
-  memcpy.rel memset.rel strcpy.rel strlen.rel strcmp.rel bcall.rel
+OBJ = setjmp.rel atomic_flag_test_and_set.rel heap.rel divu.rel divul.rel gptrget$(K).rel bf16.rel bf16add.rel bf16c.rel \
+  memcpy$(K).rel memset.rel strcpy$(K).rel strlen$(K).rel strcmp$(K).rel bcall.rel
 
 LIB = lisa.lib
 # --bf16-float: the float support routines on the bfloat16 unit, linked
@@ -104,8 +107,8 @@ all: $(PORTDIR)/$(LIB) $(PORTDIR)/$(LIB2)
 # (below all: make's default goal is the first rule's target)
 lisamodel.inc: Makefile
 	echo "TT07_CACHE = $(if $(filter lisa-cache,$(MODEL)),1,0)" > $@
-	echo "LISA_REV2 = $(if $(filter lisa-rev2,$(MODEL)),1,0)" >> $@
-	echo "T = $(if $(filter lisa-rev2,$(MODEL)),0,1)" >> $@
+	echo "LISA_REV2 = $(if $(filter lisa-rev2 lisa-rev2k,$(MODEL)),1,0)" >> $@
+	echo "T = $(if $(filter lisa-rev2 lisa-rev2k,$(MODEL)),0,1)" >> $@
 
 $(PORTDIR)/$(LIB2): $(OBJ2) Makefile
 ifeq ($(LIB_TYPE), SDCCLIB)

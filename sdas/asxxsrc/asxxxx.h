@@ -354,6 +354,7 @@ struct  area
 
 #define A_NOLOAD  0400          /* nonloadable */
 #define A_CDATA   01000         /* sdas lisa: constant data in code space (ldi/ret pairs, 4-byte units) */
+#define A_KDATA   02000         /* sdas lisa: packed constant data in code space (bytes, read by lda (ix++): RESPIN 26) */
 #define A_LOAD  0000            /* loadable (default) */
 /* end sdas specific */
 

@@ -368,6 +368,30 @@ the sources says `__banked`:
   again without an attribute in sight, plus `__nonbanked` functions and
   pointers.
 
+### Packed constants (`--pack-const`, the second chip)
+
+LISA reads its code memory as data only by executing it: a byte of
+constant data has been an `ldi #b; ret` pair that `call ix` returns
+through, four bytes of flash per byte, and it had to sit in the lower 16K
+words, which every bank sees, because the reader does not switch banks.
+NuttX's image filled that common area with them.  The second chip's
+`lda (ix++)` (RESPIN 26) reads byte IX[0] of the code word at {KB,
+IX[14:1]} and moves IX on, KB being the constant bank register at 0x21F.
+
+`--pack-const` (implies `--rev2`) puts the constant areas - CONST,
+INITIALIZER, FINITIALIZER, CABS - in the assembler's `KDATA` form, bytes
+packed two to a word, places them wherever the link script says
+(`-b CONST=0x8000` puts them in code bank 1; each area has to stay within
+one bank, the linker checks), and reads them with the instruction: a
+pointer to a constant is its byte offset in the bank with the code-space
+tag in bit 15, `__gptrget` and its kin (lib/lisa-rev2k, gptrgetk.s and the
+string helpers' k variants) read with `lda (ix++)`, and the startup writes
+KB from the linker's `k_INITIALIZER` / `k_FINITIALIZER` for its copy loops
+and leaves it on `k_CONST`.  KB is set once per image, so no interrupt
+frame carries it and generic pointers stay two bytes.  The C side sees
+`__SDCC_LISA_PACK_CONST`.  The suite runs in this form with `make check
+PACK=1` (`*_rev2k.ihx`, `lisa_sim --rev2`).
+
 ### Data banks
 
 The data window 0x4000-0x7fff is a view of one of 16 data banks, chosen by

@@ -410,7 +410,7 @@ relr3(void)
                 if (TARGET_IS_LISA) {
                         struct area *bap;
                         a_uint f, v, op, w;
-                        int n, k, iscode, iscdata;
+                        int n, k, iscode, iscdata, iskdata;
 
                         if (mode & R3_SYM)
                                 bap = s[rindex]->s_axp ? s[rindex]->s_axp->a_bap : NULL;
@@ -418,6 +418,7 @@ relr3(void)
                                 bap = a[rindex]->a_bap;
                         iscode = bap && (bap->a_flag & A_CODE);
                         iscdata = iscode && (bap->a_flag & A_CDATA);
+                        iskdata = iscode && (bap->a_flag & A_KDATA);
 
                         n = (mode & R3_BYTE) ? ((mode & R3_BYTX) ? a_bytes : 1) : 2;
                         for (f = 0, k = n; k-- > 0; )
@@ -434,7 +435,16 @@ relr3(void)
                                 mode &= ~R3_PAG;
                         } else {
                                 v = reli + f;
-                                if (iscode) {
+                                if (iskdata) {
+                                        /* packed constant data (RESPIN 26): a
+                                         * pointer to it, or an ldx of its
+                                         * address, is the byte offset in its
+                                         * bank (lda (ix++) reads the word at
+                                         * IX[14:1] of bank KB) with the
+                                         * generic-pointer tag in bit 15 */
+                                        v = (v & 0x7FFF) | 0x8000;
+                                }
+                                else if (iscode) {
                                         /* a word at or above 0x4000 is in a
                                          * code bank (RESPIN 22: the area BANKn
                                          * at byte n * 0x8000); the core sees

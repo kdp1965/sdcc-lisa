@@ -254,8 +254,11 @@ int lisa_raw = 0;
 static int
 lisa_code_data(void)
 {
+        /* a KDATA area holds its bytes packed two to a word, read by the
+           second chip's lda (ix++): no expansion there */
         return is_sdas_target_lisa() && !lisa_raw &&
-               dot.s_area != NULL && (dot.s_area->a_flag & A_CODE);
+               dot.s_area != NULL && (dot.s_area->a_flag & A_CODE) &&
+               !(dot.s_area->a_flag & A_KDATA);
 }
 
 static VOID

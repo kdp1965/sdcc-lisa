@@ -66,7 +66,7 @@ lisa_genAssemblerEnd (FILE *of)
 {
   /* declared in every module so that the linker always defines s_/l_
      for the startup copy loop; last, so that it stays behind the code */
-  tfprintf (of, "\t!area\n", "FINITIALIZER (CODE,CDATA)");
+  tfprintf (of, "\t!area\n", port->mem.xinit_name);
 }
 
 /* The generic code uses this only as a flag (xidata/xinit exist); the
@@ -187,13 +187,23 @@ lisa_genInitStartup (FILE *of)
   fprintf (of, "\tstax\t%d(sp)\n", SPO (4));
   fprintf (of, "\tldi\t#<l_INITIALIZED\n");
   fprintf (of, "\tstax\t%d(sp)\n", SPO (3));
+  if (lisa_pack_const)
+    {
+      fprintf (of, "\tldi\t#k_INITIALIZER\n");  /* the bank the packed values are in */
+      fprintf (of, "\tsta\t0x21f\n");
+    }
   fprintf (of, "\tldx\t#s_INITIALIZER\n");
   fprintf (of, "00003$:\n");
   fprintf (of, "\tldax\t%d(sp)\n", SPO (3));
   fprintf (of, "\tor\t%d(sp)\n", SPO (4));
   fprintf (of, "\tbz\t00004$\n");
-  fprintf (of, "\tcall\tix\n");
-  fprintf (of, "\tadx\t#1\n");
+  if (lisa_pack_const)
+    fprintf (of, "\tlda\t(ix++)\n");
+  else
+    {
+      fprintf (of, "\tcall\tix\n");
+      fprintf (of, "\tadx\t#1\n");
+    }
   fprintf (of, "\tpush\tix\n");
   fprintf (of, "\tldxx\t%d(sp)\n", SPO (3));
   fprintf (of, "\tstax\t0(ix)\n");
@@ -226,13 +236,23 @@ lisa_genInitStartup (FILE *of)
   fprintf (of, "\tstax\t%d(sp)\n", SPO (4));
   fprintf (of, "\tldi\t#<l_FINITIALIZED\n");
   fprintf (of, "\tstax\t%d(sp)\n", SPO (3));
+  if (lisa_pack_const)
+    {
+      fprintf (of, "\tldi\t#k_FINITIALIZER\n");
+      fprintf (of, "\tsta\t0x21f\n");
+    }
   fprintf (of, "\tldx\t#s_FINITIALIZER\n");
   fprintf (of, "00007$:\n");
   fprintf (of, "\tldax\t%d(sp)\n", SPO (3));
   fprintf (of, "\tor\t%d(sp)\n", SPO (4));
   fprintf (of, "\tbz\t00008$\n");
-  fprintf (of, "\tcall\tix\n");
-  fprintf (of, "\tadx\t#1\n");
+  if (lisa_pack_const)
+    fprintf (of, "\tlda\t(ix++)\n");
+  else
+    {
+      fprintf (of, "\tcall\tix\n");
+      fprintf (of, "\tadx\t#1\n");
+    }
   fprintf (of, "\tpush\tix\n");
   fprintf (of, "\tldxx\t%d(sp)\n", SPO (3));
   fprintf (of, "\tstax\t0(ix)\n");
@@ -323,6 +343,14 @@ lisa_reg_parm (sym_link *l, bool reentrant)
    come.  --tt07-cache is the TT07 cache's layout and workarounds, which
    the rev-2 cache does not need: the two exclude each other. */
 #define OPTION_REV2 "--rev2"
+/* --pack-const (implies --rev2): constant data packed two bytes to a code
+   word (areas CONST, INITIALIZER, FINITIALIZER, CABS flagged KDATA, read
+   with the second chip's lda (ix++) from the bank KB, ttsky26d RESPIN 26)
+   instead of an ldi/ret pair per byte in the lower 16K words.  A pointer
+   to a constant is its byte offset in that bank, the startup writes KB
+   (0x21F) from k_CONST; the linker keeps each area inside one bank.
+   Links lib/lisa-rev2k; defines __SDCC_LISA_PACK_CONST. */
+#define OPTION_PACK_CONST "--pack-const"
 
 #define OPTION_STACK_SIZE "--stack-size"
 
@@ -331,12 +359,14 @@ static OPTION lisa_options[] = {
   {0, OPTION_TT07_CACHE, NULL, "data in the 32K SRAM behind the TT07 data cache: stack at 0x7fff, data limited to 16K minus --stack-size"},
   {0, OPTION_STACK_SIZE, NULL, "<nnnn> bytes reserved for the stack (--tt07-cache: 2K unless given)"},
   {0, OPTION_REV2, NULL, "code for the second chip (ttsky26c): bf16_add on its hardware adder (lib/lisa-rev2), __SDCC_LISA_REV2 defined"},
+  {0, OPTION_PACK_CONST, NULL, "constants packed two to a code word in the bank KB, read with lda (ix++) (the second chip; implies --rev2; lib/lisa-rev2k)"},
   {0, NULL}
 };
 
 static bool lisa_bf16_float = false;
 bool lisa_tt07_cache = false;
 bool lisa_rev2 = false;
+bool lisa_pack_const = false;
 
 static bool
 lisa_parseOptions (int *pargc, char **argv, int *i)
@@ -354,6 +384,19 @@ lisa_parseOptions (int *pargc, char **argv, int *i)
   if (!strcmp (argv[*i], OPTION_REV2))
     {
       lisa_rev2 = true;
+      return TRUE;
+    }
+  if (!strcmp (argv[*i], OPTION_PACK_CONST))
+    {
+      lisa_pack_const = true;
+      lisa_rev2 = true;
+      /* the packed areas, before the memory maps are made from the port
+         table's names (its members are const) */
+      *(const char **) &port->mem.const_name = "CONST (CODE,KDATA)";
+      *(const char **) &port->mem.cabs_name = "CABS (ABS,CODE,KDATA)";
+      *(const char **) &port->mem.xinit_name = "FINITIALIZER (CODE,KDATA)";
+      *(const char **) &port->mem.initializer_name = "INITIALIZER (CODE,KDATA)";
+      options.const_seg = Safe_strdup ("CONST (CODE,KDATA)");   /* setDefaultOptions copied the table's */
       return TRUE;
     }
   if (!strncmp (argv[*i], OPTION_STACK_SIZE, strlen (OPTION_STACK_SIZE)))
@@ -383,6 +426,10 @@ lisa_finaliseOptions (void)
     }
   if (lisa_rev2)
     addSet (&preArgvSet, Safe_strdup ("-D__SDCC_LISA_REV2"));
+  if (lisa_pack_const)
+    {
+      addSet (&preArgvSet, Safe_strdup ("-D__SDCC_LISA_PACK_CONST"));
+    }
   /* --codeseg BANKn (a code bank of the second chip, as #pragma bank n):
      the area wants its CODE flag */
   if (options.code_seg && !strncmp (options.code_seg, "BANK", 4) && isdigit ((unsigned char) options.code_seg[4]) && !strchr (options.code_seg, ' '))
@@ -560,7 +607,7 @@ hasExtBitOp (int op, sym_link *left, int right)
 static const char *
 get_model (void)
 {
-  return lisa_rev2 ? "lisa-rev2" : lisa_tt07_cache ? "lisa-cache" : "lisa";
+  return lisa_pack_const ? "lisa-rev2k" : lisa_rev2 ? "lisa-rev2" : lisa_tt07_cache ? "lisa-cache" : "lisa";
 }
 
 /** $1 is always the basename.
