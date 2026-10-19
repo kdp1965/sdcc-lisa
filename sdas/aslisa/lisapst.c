@@ -252,6 +252,7 @@ struct  mne     mne[] = {
     {   NULL,   "savec",        S_INH,          0,      0xA178    },
     {   NULL,   "restc",        S_INH,          0,      0xA17C    },
     {   NULL,   "ldirq",        S_INH,          0,      0xA120    },
+    {   NULL,   "ldamode",      S_INH,          0,      0xA148    },   /* rev 2: A = {ie, amode} */
     {   NULL,   "stirq",        S_INH,          0,      0xA124    },
     {   NULL,   "eidi",         S_BIT,          0,      0xA078    },
     {   NULL,   "di",           S_INH,          0,      0xA078    },
