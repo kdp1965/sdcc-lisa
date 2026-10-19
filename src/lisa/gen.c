@@ -1063,8 +1063,16 @@ loadA (const asmop *aop, int offset)
       break;
     case AOP_CODE:
       ixLoadSym (aop, offset);
-      emit2 ("call", "ix");
-      cost (1, 4);
+      if (lisa_pack_const)
+        {
+          emit2 ("lda", "(ix++)");    /* the byte from the KB bank, IX on the next */
+          cost (1, 2);
+        }
+      else
+        {
+          emit2 ("call", "ix");       /* the pair's ret #byte */
+          cost (1, 4);
+        }
       ixInvalidate ();
       break;
     case AOP_DUMMY:
