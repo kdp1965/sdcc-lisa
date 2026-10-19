@@ -162,9 +162,15 @@ machine(struct mne *mp)
         case S_DIR:
                 /*
                  * [p:abs9]: a 10-bit data address, 0x200..0x3ff is the
-                 * peripheral space.
+                 * peripheral space.  lda (ix++) is the constant read of the
+                 * second chip (0xA14C, RESPIN 26): A <= byte IX[0] of the
+                 * code word at {KB, IX[14:1]}, IX + 1.
                  */
                 t = addr(&e);
+                if (t == S_IXINC && op == 0xF400) {
+                        outaw(0xA14C);
+                        break;
+                }
                 if (t != S_IMM)
                         aerr();
                 if (e.e_flag == 0 && e.e_base.e_ap == NULL) {

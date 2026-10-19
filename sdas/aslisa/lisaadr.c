@@ -91,10 +91,18 @@ addr(struct expr *esp)
         }
 
         if (c == '(') {
-                /* (sp) / (ix): offset 0 */
+                /* (sp) / (ix): offset 0; (ix++): lda (ix++) */
                 getid(id, -1);
                 r = regname(id);
-                if (getnb() != ')' || (r != R_SP && r != R_IX))
+                c = getnb();
+                if (c == '+' && r == R_IX) {
+                        if (getnb() != '+' || getnb() != ')')
+                                qerr();
+                        esp->e_mode = S_IXINC;
+                        esp->e_addr = 0;
+                        return esp->e_mode;
+                }
+                if (c != ')' || (r != R_SP && r != R_IX))
                         qerr();
                 esp->e_mode = (r == R_SP) ? S_SPO : S_IXO;
                 esp->e_addr = 0;
