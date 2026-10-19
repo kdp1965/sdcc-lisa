@@ -54,7 +54,12 @@ LISA_INT = $(COMMON_INT) \
 LISA_LONG = \
   _mullong.c
 
-LISA_LONGLONG = $(COMMON_LONGLONG) \
+# the second chip's unsigned 64-bit division and remainder are divull.s
+# (the chained divide step divc, ttsky26d RESPIN 27) with the generic loops
+# renamed as its fallback for a wide divisor (divullb.c, modullb.c); TT07
+# keeps the generic routines
+REV2 = $(filter lisa-rev2 lisa-rev2k,$(MODEL))
+LISA_LONGLONG = $(filter-out $(if $(REV2),_divulonglong.c _modulonglong.c),$(COMMON_LONGLONG) \
   _srulonglong.c \
   _srslonglong.c \
   _slulonglong.c \
@@ -63,7 +68,7 @@ LISA_LONGLONG = $(COMMON_LONGLONG) \
   _divslonglong.c \
   _divulonglong.c \
   _modslonglong.c \
-  _modulonglong.c
+  _modulonglong.c)
 
 LISA_SDCC = $(filter-out _memset.c,$(COMMON_SDCC)) \
   __itoa.c \
@@ -90,7 +95,8 @@ LISAOBJECTS = $(patsubst %.c,%.rel,$(LISA_FLOAT) $(LISA_INT) $(LISA_LONG) $(LISA
 # memcpy (with __memcpy), memset, strcpy, strlen and strcmp are assembly: a
 # loop per space of the generic source, the pointers swapped through IX
 OBJ = setjmp.rel atomic_flag_test_and_set.rel heap.rel divu.rel divul.rel gptrget$(K).rel bf16.rel bf16add.rel bf16c.rel \
-  memcpy$(K).rel memset.rel strcpy$(K).rel strlen$(K).rel strcmp$(K).rel bcall.rel
+  memcpy$(K).rel memset.rel strcpy$(K).rel strlen$(K).rel strcmp$(K).rel bcall.rel \
+  $(if $(REV2),divull.rel divullb.rel modullb.rel)
 
 LIB = lisa.lib
 # --bf16-float: the float support routines on the bfloat16 unit, linked

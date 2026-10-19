@@ -98,7 +98,16 @@ build/bin/sdcc -mlisa -o prog.ihx prog.c          # Intel HEX, byte addresses = 
   256 is four 16/8 hardware divisions, anything else Knuth's algorithm D
   in base 256 with the digit estimates on the divider - about 100 and
   500-600 instructions a call against 3000-6000 for the bit-serial C
-  routines.
+  routines.  `unsigned long long` `/` and `%` in the second chip's
+  libraries (`lisa-rev2`, `lisa-rev2k`) are `device/lib/lisa/divull.s`
+  on the chained divide step (ttsky26d RESPIN 27: `div` leaves the
+  remainder in IX, `divc` divides {IX, A} by the latched divisor): a
+  divisor below 65536 - printf's bases, a clock's 1000 - is one `divc`
+  per byte of the dividend, about 60 instructions with interrupts off
+  for the chain (the latched divisor is state any division replaces);
+  a wider divisor stays the bit-serial loop (`divullb.c`, `modullb.c`:
+  SDCC's generic routines renamed), 20K instructions.  The signed ones
+  go through them.  TT07's libraries keep the generic routines.
 * The bfloat16 unit: `#include <lisa/bf16.h>` gives `bf16_t` (the bit
   pattern) with `bf16_mul`/`bf16_div`/`bf16_gt`/`bf16_eq`/`bf16_cmp`/
   `bf16_from_uint`/`bf16_to_uint` on the hardware, `bf16_add`/`bf16_sub`
@@ -464,6 +473,6 @@ The smaller, chip-sized suite is `../sdcc_test` (`make check`); its
 | compiler back end | `src/lisa/{main.c,gen.c,ralloc.c,ralloc2.cc,peeph.def}` (`ralloc2.cc`: A for one-byte temporaries, tree-decomposition allocator with dry-run costs) |
 | assembler | `sdas/aslisa/{lisa.h,lisaadr.c,lisamch.c,lisapst.c}`, data-in-code expansion in `sdas/asxxsrc/asout.c`, `.p` suffix in `asmain.c` |
 | linker | `sdas/linksrc/lkrloc3.c` (LISA relocation rules), `lkarea.c` (code/data spaces, CDATA alignment, `s_<area>` symbols) |
-| library | `device/lib/lisa/{Makefile.in,setjmp.s,atomic_flag_test_and_set.s,heap.s,divu.s,divul.s,gptrget.s,memcpy.s,memset.s,strcpy.s,strlen.s,strcmp.s,bf16.s,bf16add.s,bf16c.c,bf16fs.s,bf16fsc.c}`, `device/include/lisa/tt07.h` (peripherals, interrupts), `device/include/lisa/bf16.h` (the FPU), `device/include/stdarg.h`, `setjmp.h`, `stdatomic.h` |
+| library | `device/lib/lisa/{Makefile.in,setjmp.s,atomic_flag_test_and_set.s,heap.s,divu.s,divul.s,divull.s,divullb.c,modullb.c,gptrget.s,memcpy.s,memset.s,strcpy.s,strlen.s,strcmp.s,bf16.s,bf16add.s,bf16c.c,bf16fs.s,bf16fsc.c}`, `device/include/lisa/tt07.h` (peripherals, interrupts), `device/include/lisa/bf16.h` (the FPU), `device/include/stdarg.h`, `setjmp.h`, `stdatomic.h` |
 | regression port | `support/regression/ports/lisa/{spec.mk,support.c}`, `fwk/include/testfwk.h` (`__SDCC_lisa`), LISA addresses in `tests/bitfields-*.c.in`, `tests/absolute.c.in` |
 | generic hooks | `src/SDCCglue.c` (program startup jumps, sfr table, FDATA), `src/SDCCsymt.c` (8-bit div/mod helpers return int; `__at` objects stay in data), `src/SDCCmem.c` (big objects to FDATA), `src/SDCCval.c` (code-pointer offset scaling), `src/port.h`, `src/SDCCmain.c`, `configure.ac`, `Makefile.in`, `device/lib/Makefile.in`, `device/lib/malloc.c` (lazy heap init) |
