@@ -403,12 +403,15 @@ PACK=1` (`*_rev2k.ihx`, `lisa_sim --rev2`).
 
 ### Data banks
 
-The data window 0x4000-0x7fff is a view of one of 16 data banks, chosen by
-`[p:0x16]` for every IX-relative access (SP-relative accesses use the stack
-bank `[p:0x17]`, so switching the data bank never moves the stack).  The
-port uses SDCC's named address spaces for it: a space is a switch function
-plus a name, and the compiler calls the function before every access to
-an object of that space.
+The data space of the second chip has three regions, by address (RESPIN
+28; before it the upper 16K was one window chosen by the form of the
+access): below 0x2000 the common 8K, 0x2000-0x3fff the data window on one
+of 32 granules of 8K chosen by `[p:0x16]`, 0x4000-0x7fff the stack window
+on one of 16 banks of 16K chosen by `[p:0x17]`.  Switching the data bank
+never moves a stack above 0x4000.  The port uses SDCC's named address
+spaces for the data window: a space is a switch function plus a name, and
+the compiler calls the function before every access to an object of that
+space.
 
 ```c
 __sfr __at(0x216) DATA_BANK;
@@ -418,17 +421,18 @@ __addressmod dbank2 DBANK2;          /* the name is also the object's area */
 DBANK2 unsigned char buf[4096];      /* in data bank 2 */
 ```
 
-    sdcc -mlisa --rev2 -o prog.ihx prog.c -Wl-bDBANK2=0x4000
+    sdcc -mlisa --rev2 -o prog.ihx prog.c -Wl-bDBANK2=0x2000
 
 * Name the spaces `DBANKn`: the area of a space is its name, linked at
-  0x4000 (`-bDBANKn=0x4000`; several spaces share the window address, each
-  in its own bank).  Their objects are always addressed through IX.
+  0x2000 (`-bDBANKn=0x2000`; several spaces share the window address, each
+  in its own granule; a space holds 8K at most).  Their objects are always
+  addressed through IX.
 * The switch function leaves the bank where it put it, so ordinary data
-  (DATA, FDATA, the initialized areas) must stay below 0x4000 once there
-  are data banks; the linker checks it (`--data-loc` / `--xram-loc` keep
-  it low).  The stack is exempt: it is SP-relative.  Exception: a frame
-  bigger than 511 bytes is reached through IX for its far bytes, so keep
-  such frames out of a stack above 0x4000 while data banks are used.
+  (DATA, FDATA, the initialized areas) must stay below 0x2000, in the
+  common 8K, once there are data banks; the linker checks it (`--data-loc`
+  / `--xram-loc` keep it low).  The stack is exempt: above 0x4000 it is in
+  the stack bank whatever the data bank; a stack in the data window moves
+  with it.
 * The startup neither initializes nor clears objects in a data bank: give
   them their values at run time.
 * A pointer to a space-qualified type (`DBANK2 unsigned char *p`) is a

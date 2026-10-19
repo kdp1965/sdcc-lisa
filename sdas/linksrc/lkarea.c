@@ -566,14 +566,16 @@ lnkarea(void)
                 }
         }
 
-        /* sdld lisa: the second chip's banks (ttsky26d RESPIN 22).  The
-           upper half of each space is a window on a bank: code in an area
-           BANKn (#pragma bank n) must sit in bank n (bytes n * 0x8000 ..),
-           and once there are code banks the common code must stay below
-           word 0x4000 (byte 0x8000), where every bank sees it.  Data in an
-           area DBANKn (an __addressmod space) must sit in the window 0x4000
-           .. 0x7fff, and once there is one, ordinary data must stay below
-           0x4000: a switch function leaves the data bank where it put it */
+        /* sdld lisa: the second chip's banks (ttsky26d RESPIN 22, the data
+           map of RESPIN 28).  The upper half of the code space is a window
+           on a bank: code in an area BANKn (#pragma bank n) must sit in
+           bank n (bytes n * 0x8000 ..), and once there are code banks the
+           common code must stay below word 0x4000 (byte 0x8000), where
+           every bank sees it.  Data in an area DBANKn (an __addressmod
+           space) must sit in the data window 0x2000 .. 0x3fff (a granule
+           of 8K chosen by the data bank), and once there is one, ordinary
+           data must stay below 0x2000, in the common 8K: a switch function
+           leaves the data bank where it put it */
         if (TARGET_IS_LISA) {
                 int bad = 0, cbanks = 0, dbanks = 0, n;
                 for (ap = areap; ap; ap = ap->a_ap) {
@@ -590,8 +592,8 @@ lnkarea(void)
                         }
                         if (!(ap->a_flag & A_CODE) && sscanf(ap->a_id, "DBANK%d", &n) == 1) {
                                 dbanks = 1;
-                                if (ap->a_addr < 0x4000 || ap->a_addr + ap->a_size > 0x8000) {
-                                        fprintf(stderr, "?ASlink-Error-Data bank area %s at 0x%04lX..0x%04lX is not inside the window 0x4000..0x7fff (-b%s=0x4000)\n",
+                                if (ap->a_addr < 0x2000 || ap->a_addr + ap->a_size > 0x4000) {
+                                        fprintf(stderr, "?ASlink-Error-Data bank area %s at 0x%04lX..0x%04lX is not inside the data window 0x2000..0x3fff (-b%s=0x2000)\n",
                                                 ap->a_id, (long) ap->a_addr, (long) (ap->a_addr + ap->a_size), ap->a_id);
                                         bad = 1;
                                 }
@@ -617,10 +619,10 @@ lnkarea(void)
                                         ap->a_id, (long) (ap->a_addr + ap->a_size));
                                 bad = 1;
                         }
-                        /* (not SSEG, the stack: SP-relative, it follows the stack bank) */
+                        /* (not SSEG, the stack: it lives in whatever bank its register names) */
                         if (dbanks && !(ap->a_flag & A_CODE) && sscanf(ap->a_id, "DBANK%d", &n) != 1 &&
-                            strcmp(ap->a_id, "SSEG") && ap->a_addr + ap->a_size > 0x4000) {
-                                fprintf(stderr, "?ASlink-Error-Data area %s ends at 0x%04lX: with data banks ordinary data must stay below 0x4000\n",
+                            strcmp(ap->a_id, "SSEG") && ap->a_addr + ap->a_size > 0x2000) {
+                                fprintf(stderr, "?ASlink-Error-Data area %s ends at 0x%04lX: with data banks ordinary data must stay below 0x2000\n",
                                         ap->a_id, (long) (ap->a_addr + ap->a_size));
                                 bad = 1;
                         }
