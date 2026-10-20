@@ -228,8 +228,13 @@ machine(struct mne *mp)
         case S_LDXF:
                 /*
                  * ldxf #imm24 (the third chip, REV3.md): the opcode, the low
-                 * 16 bits, then {8'h0, bits 23:16}.  A constant only until
-                 * the linker relocates 24-bit addresses.
+                 * 16 bits, then {8'h0, bits 23:16}.  A symbol is a word
+                 * relocation with R_PAG0 and R_MSB together (unused
+                 * otherwise), its field the low 16 bits of the offset and
+                 * the next byte the rest; the linker's LISA code turns the
+                 * three bytes into the 24-bit pointer - a function's
+                 * {1, bank, pc}, a packed constant's {1, bank, byte
+                 * offset}, a data address as it is.
                  */
                 t = addr(&e);
                 if (t != S_IMM)
@@ -239,9 +244,10 @@ machine(struct mne *mp)
                         outaw(e.e_addr & 0xFFFF);
                         outaw((e.e_addr >> 16) & 0xFF);
                 } else {
-                        err('r');       /* a symbol: not yet (24-bit relocation) */
-                        outaw(0);
-                        outaw(0);
+                        outchk(4, 4);   /* the four bytes in one T line */
+                        outrw(&e, R_PAG0 | R_MSB);
+                        outab((e.e_addr >> 16) & 0xFF);
+                        outab(0);
                 }
                 break;
 

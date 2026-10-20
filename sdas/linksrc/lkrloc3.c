@@ -409,8 +409,8 @@ relr3(void)
                  */
                 if (TARGET_IS_LISA) {
                         struct area *bap;
-                        a_uint f, v, op, w;
-                        int n, k, iscode, iscdata, iskdata;
+                        a_uint f, v, op, w, bank;
+                        int n, k, iscode, iscdata, iskdata, is24;
 
                         if (mode & R3_SYM)
                                 bap = s[rindex]->s_axp ? s[rindex]->s_axp->a_bap : NULL;
@@ -420,7 +420,14 @@ relr3(void)
                         iscdata = iscode && (bap->a_flag & A_CDATA);
                         iskdata = iscode && (bap->a_flag & A_KDATA);
 
-                        n = (mode & R3_BYTE) ? ((mode & R3_BYTX) ? a_bytes : 1) : 2;
+                        /* R3_PAG0 with R3_MSB on a word: a 24-bit pointer
+                         * (REV3.md, ldxf #sym): the word and the byte after
+                         * it hold the offset, the three bytes get the
+                         * pointer - a function's {1, bank, window word}, a
+                         * packed constant's {1, bank, byte offset in the
+                         * bank}, a data address as it is */
+                        is24 = !(mode & R3_BYTE) && (mode & R3_PAG0) && (mode & R3_MSB);
+                        n = is24 ? 3 : (mode & R3_BYTE) ? ((mode & R3_BYTX) ? a_bytes : 1) : 2;
                         for (f = 0, k = n; k-- > 0; )
                                 f = (f << 8) | rtval[rtp + k];
 
@@ -433,6 +440,17 @@ relr3(void)
                                         error = 15;
                                 v = op | (v & 0x3FF);
                                 mode &= ~R3_PAG;
+                        } else if (is24) {
+                                v = reli + f;
+                                bank = (v >> 15) & 0x7F;
+                                if (iskdata)
+                                        v = 0x800000 | (bank << 16) | (bank ? 0x8000 : 0) | (v & 0x7FFF);
+                                else if (iscode) {
+                                        w = (v >> 1) & 0x3FFF;
+                                        v = 0x800000 | (bank << 16) | (bank ? 0x4000 : 0) | w;
+                                } else
+                                        v &= 0x7FFFFF;
+                                mode &= ~(R3_PAG0 | R3_MSB);
                         } else {
                                 v = reli + f;
                                 if (iskdata) {
