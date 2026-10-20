@@ -1895,7 +1895,7 @@ ee_u8 check_data_types() {
 		ee_printf("ERROR: ee_u32 is not a 32b datatype!\n");
 		retval++;
 	}
-	if (sizeof(ee_ptr_int) != sizeof(int *)) {
+	if (sizeof(ee_ptr_int) < sizeof(int *)) { /* a wider integer holds it: lisa --rev3 has 3-byte pointers and a 4-byte uintptr_t */
 		ee_printf("ERROR: ee_ptr_int is not a datatype that holds an int pointer!\n");
 		retval++;
 	}
@@ -2006,7 +2006,7 @@ void portable_init(core_portable *p, int *argc, char *argv[])
 {
 	init();
 
-	if (sizeof(ee_ptr_int) != sizeof(ee_u8 *)) {
+	if (sizeof(ee_ptr_int) < sizeof(ee_u8 *)) {
 		ee_printf("ERROR! Please define ee_ptr_int to a type that holds a pointer!\n");
 	}
 	if (sizeof(ee_u32) != 4) {

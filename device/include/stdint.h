@@ -97,8 +97,8 @@ typedef unsigned long long int  uint_fast64_t;
 #endif // __SPECIFIED_WIDTH_INTEGER_TYPES_DEFINED
 
 /* Types for `void *' pointers.  */
-#if defined (__SDCC_mcs51) || defined (__SDCC_ds390)
-  typedef long int              intptr_t;
+#if defined (__SDCC_mcs51) || defined (__SDCC_ds390) || defined (__SDCC_LISA_REV3)
+  typedef long int              intptr_t;   /* lisa --rev3: 24-bit pointers */
   typedef unsigned long int     uintptr_t;
 #else
   typedef int                   intptr_t;
@@ -190,7 +190,7 @@ typedef unsigned long long int  uintmax_t;
 #endif
 
 /* Values to test for integral types holding `void *' pointer.  */
-#if defined (__SDCC_mcs51) || defined (__SDCC_ds390)
+#if defined (__SDCC_mcs51) || defined (__SDCC_ds390) || defined (__SDCC_LISA_REV3)
 #define INTPTR_MIN             (-2147483647L-1)
 #define INTPTR_MAX             (2147483647L)
 #define UINTPTR_MAX            (4294967295UL)
