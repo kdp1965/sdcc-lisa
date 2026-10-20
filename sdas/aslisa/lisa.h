@@ -60,7 +60,8 @@
 #define S_IMM     31    /* #expr or bare expr                              */
 #define S_SPO     32    /* n(sp)                                           */
 #define S_IXO     33
-#define S_IXINC	75		/* (ix++): lda (ix++), the constant read (ttsky26d RESPIN 26) */    /* n(ix)                                           */
+#define S_IXINC	75		/* (ix++): lda (ix++), the constant read (ttsky26d RESPIN 26) */
+#define S_LDXF    76    /* three-word: ldxf #imm24 (the third chip, REV3.md)       */    /* n(ix)                                           */
 #define S_REG     34    /* a register name, in e_addr                      */
 
 #define R_A       0

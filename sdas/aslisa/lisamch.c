@@ -225,6 +225,26 @@ machine(struct mne *mp)
                         outrw(&e, R_PAG0);      /* code symbols: the word address */
                 break;
 
+        case S_LDXF:
+                /*
+                 * ldxf #imm24 (the third chip, REV3.md): the opcode, the low
+                 * 16 bits, then {8'h0, bits 23:16}.  A constant only until
+                 * the linker relocates 24-bit addresses.
+                 */
+                t = addr(&e);
+                if (t != S_IMM)
+                        aerr();
+                outaw(op);
+                if (e.e_flag == 0 && e.e_base.e_ap == NULL) {
+                        outaw(e.e_addr & 0xFFFF);
+                        outaw((e.e_addr >> 16) & 0xFF);
+                } else {
+                        err('r');       /* a symbol: not yet (24-bit relocation) */
+                        outaw(0);
+                        outaw(0);
+                }
+                break;
+
         case S_LDXS:
                 /*
                  * ldxs #expr: ldx with the two bytes of the literal

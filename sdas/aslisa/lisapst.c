@@ -213,10 +213,13 @@ struct  mne     mne[] = {
         /* ix / sp / ra */
     {   NULL,   "ldx",          S_LDX,          0,      0xA180    },
     {   NULL,   "ldxs",         S_LDXS,         0,      0xA180    },
+    {   NULL,   "ldxf",         S_LDXF,         0,      0xA190    },  /* the third chip (REV3.md): a 24-bit literal in two words */
     {   NULL,   "tax",          S_INH,          0,      0xA100    },
     {   NULL,   "taxu",         S_INH,          0,      0xA108    },
+    {   NULL,   "taxh",         S_INH,          0,      0xA110    },  /* the third chip: IX[23:16] <= A */
     {   NULL,   "txa",          S_INH,          0,      0xA010    },
     {   NULL,   "txau",         S_INH,          0,      0xA018    },
+    {   NULL,   "txah",         S_INH,          0,      0xA014    },  /* the third chip: A <= IX[23:16] */
     {   NULL,   "addax",        S_INH,          0,      0xA1A0    },
     {   NULL,   "addaxc",       S_INH,          0,      0xA1A4    },
     {   NULL,   "addaxu",       S_INH,          0,      0xA1A1    },
