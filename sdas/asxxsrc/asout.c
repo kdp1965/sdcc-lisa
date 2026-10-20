@@ -572,6 +572,15 @@ outrxb(int i, struct expr *esp, int r)
                 } else {
                         if ((i == 1) && (!is_sdas() || !(is_sdas_target_8051_like() || is_sdas_target_stm8()))) {
                                 r |= R_BYTE | R_BYTX | esp->e_rlcf;
+                                /*
+                                 * sdas lisa: (sym >> 16), the third byte of
+                                 * the third chip's 24-bit pointer (REV3.md).
+                                 * R_HIB does not fit the mode byte; R_PAG0
+                                 * on a byte is free and the linker's LISA
+                                 * code selects the byte of the pointer.
+                                 */
+                                if (is_sdas_target_lisa() && (r & R_HIB))
+                                        r = (r & ~(R_HIB | R_MSB)) | R_PAG0;
                                 if (r & R_MSB) {
                                         out_lb(hibyte(esp->e_addr),r|R_RELOC|R_HIGH);
                                 } else {

@@ -94,29 +94,29 @@ __divslong:
 	ads	#-30
 	ldi	#0x00
 	stax	T+2(sp)
-	ldax	T+43(sp)			; the signs differ: a negative quotient
-	xor	T+39(sp)
+	ldax	T+R+43(sp)			; the signs differ: a negative quotient
+	xor	T+R+39(sp)
 	br	sdiv32
 __modslong:
 	sra
 	ads	#-30
 	ldi	#0x01
 	stax	T+2(sp)
-	ldax	T+39(sp)			; the dividend's sign is the remainder's
+	ldax	T+R+39(sp)			; the dividend's sign is the remainder's
 sdiv32:
 	andi	#0x80
 	stax	T+27(sp)			; NEG
-	ldax	T+39(sp)
+	ldax	T+R+39(sp)
 	btst	7
 	bnz	1$
 	spix
-	adx	#T+36
+	adx	#T+R+36
 	jal	neg4			; a = -a
-1$:	ldax	T+43(sp)
+1$:	ldax	T+R+43(sp)
 	btst	7
 	bnz	udiv32
 	spix
-	adx	#T+40
+	adx	#T+R+40
 	jal	neg4			; b = -b
 udiv32:
 	ldi	#0x00
@@ -125,56 +125,56 @@ udiv32:
 	stax	T+14(sp)			; U[4..6]
 	stax	T+15(sp)
 	stax	T+16(sp)
-	stax	T+32(sp)			; Q[0..3]
-	stax	T+33(sp)
-	stax	T+34(sp)
-	stax	T+35(sp)
+	stax	T+R+32(sp)			; Q[0..3]
+	stax	T+R+33(sp)
+	stax	T+R+34(sp)
+	stax	T+R+35(sp)
 	; b below 256?
-	ldax	T+41(sp)
-	or	T+42(sp)
-	or	T+43(sp)
+	ldax	T+R+41(sp)
+	or	T+R+42(sp)
+	or	T+R+43(sp)
 	bnz	knuth
 
 	; ---- a byte at a time: {r, a[i]} / b0, r = {r, a[i]} % b0 -------
 	stax	T(sp)			; r = 0
-	ldax	T+39(sp)
+	ldax	T+R+39(sp)
 	lddiv	T(sp)
-	ldax	T+40(sp)
+	ldax	T+R+40(sp)
 	div	0, T+1(sp)
-	stax	T+35(sp)			; Q[3]
-	ldax	T+39(sp)
+	stax	T+R+35(sp)			; Q[3]
+	ldax	T+R+39(sp)
 	lddiv	T(sp)
-	ldax	T+40(sp)
+	ldax	T+R+40(sp)
 	rem	0, T+1(sp)
 	stax	T(sp)
-	ldax	T+38(sp)
+	ldax	T+R+38(sp)
 	lddiv	T(sp)
-	ldax	T+40(sp)
+	ldax	T+R+40(sp)
 	div	0, T+1(sp)
-	stax	T+34(sp)			; Q[2]
-	ldax	T+38(sp)
+	stax	T+R+34(sp)			; Q[2]
+	ldax	T+R+38(sp)
 	lddiv	T(sp)
-	ldax	T+40(sp)
+	ldax	T+R+40(sp)
 	rem	0, T+1(sp)
 	stax	T(sp)
-	ldax	T+37(sp)
+	ldax	T+R+37(sp)
 	lddiv	T(sp)
-	ldax	T+40(sp)
+	ldax	T+R+40(sp)
 	div	0, T+1(sp)
-	stax	T+33(sp)			; Q[1]
-	ldax	T+37(sp)
+	stax	T+R+33(sp)			; Q[1]
+	ldax	T+R+37(sp)
 	lddiv	T(sp)
-	ldax	T+40(sp)
+	ldax	T+R+40(sp)
 	rem	0, T+1(sp)
 	stax	T(sp)
-	ldax	T+36(sp)
+	ldax	T+R+36(sp)
 	lddiv	T(sp)
-	ldax	T+40(sp)
+	ldax	T+R+40(sp)
 	div	0, T+1(sp)
-	stax	T+32(sp)			; Q[0]
-	ldax	T+36(sp)
+	stax	T+R+32(sp)			; Q[0]
+	ldax	T+R+36(sp)
 	lddiv	T(sp)
-	ldax	T+40(sp)
+	ldax	T+R+40(sp)
 	rem	0, T+1(sp)
 	stax	T+10(sp)			; the remainder, as U[0..3] with S = 0
 	ldi	#0x00
@@ -191,19 +191,19 @@ knuth:
 	stax	T+29(sp)
 	ldi	#0x04
 	stax	T+26(sp)
-	ldax	T+43(sp)
+	ldax	T+R+43(sp)
 	bnz	topdig
 	ldi	#0x03
 	stax	T+26(sp)
 	ldi	#0x01
 	stax	T+29(sp)
-	ldax	T+42(sp)
+	ldax	T+R+42(sp)
 	bnz	topdig
 	ldi	#0x02
 	stax	T+26(sp)
 	ldi	#0x01
 	stax	T+28(sp)
-	ldax	T+41(sp)
+	ldax	T+R+41(sp)
 topdig:
 	; S = its leading zeros, T = 2^S
 	stax	T(sp)			; the top digit
@@ -228,55 +228,55 @@ clzdone:
 	ldax	T+9(sp)
 	stax	T(sp)			; T = 2^s
 	; V = b * 2^s: V[k] = mul(b[k]) | mulu(b[k-1]); U = a * 2^s the same, U[4] = mulu(a[3])
-	ldax	T+40(sp)
+	ldax	T+R+40(sp)
 	mul	T(sp)
 	stax	T+17(sp)
-	ldax	T+40(sp)
+	ldax	T+R+40(sp)
 	mulu	T(sp)
 	stax	T+18(sp)
-	ldax	T+41(sp)
+	ldax	T+R+41(sp)
 	mul	T(sp)
 	or	T+18(sp)
 	stax	T+18(sp)
-	ldax	T+41(sp)
+	ldax	T+R+41(sp)
 	mulu	T(sp)
 	stax	T+19(sp)
-	ldax	T+42(sp)
+	ldax	T+R+42(sp)
 	mul	T(sp)
 	or	T+19(sp)
 	stax	T+19(sp)
-	ldax	T+42(sp)
+	ldax	T+R+42(sp)
 	mulu	T(sp)
 	stax	T+20(sp)
-	ldax	T+43(sp)
+	ldax	T+R+43(sp)
 	mul	T(sp)
 	or	T+20(sp)
 	stax	T+20(sp)
-	ldax	T+36(sp)
+	ldax	T+R+36(sp)
 	mul	T(sp)
 	stax	T+10(sp)
-	ldax	T+36(sp)
+	ldax	T+R+36(sp)
 	mulu	T(sp)
 	stax	T+11(sp)
-	ldax	T+37(sp)
+	ldax	T+R+37(sp)
 	mul	T(sp)
 	or	T+11(sp)
 	stax	T+11(sp)
-	ldax	T+37(sp)
+	ldax	T+R+37(sp)
 	mulu	T(sp)
 	stax	T+12(sp)
-	ldax	T+38(sp)
+	ldax	T+R+38(sp)
 	mul	T(sp)
 	or	T+12(sp)
 	stax	T+12(sp)
-	ldax	T+38(sp)
+	ldax	T+R+38(sp)
 	mulu	T(sp)
 	stax	T+13(sp)
-	ldax	T+39(sp)
+	ldax	T+R+39(sp)
 	mul	T(sp)
 	or	T+13(sp)
 	stax	T+13(sp)
-	ldax	T+39(sp)
+	ldax	T+R+39(sp)
 	mulu	T(sp)
 	stax	T+14(sp)
 	; VT, VT2 = V[VN-1], V[VN-2]; J = 4 - VN
@@ -524,7 +524,7 @@ sub5:
 	stax	4(ix)
 storeq:
 	spix
-	adx	#T+32
+	adx	#T+R+32
 	ldax	T+4(sp)
 	addax				; IX = &Q[J], in the return slot
 	ldax	T+5(sp)
@@ -559,44 +559,44 @@ remainder:
 	bnz	5$
 	ldax	T+10(sp)
 	mulu	T(sp)
-	stax	T+32(sp)
+	stax	T+R+32(sp)
 	ldax	T+11(sp)
 	mul	T(sp)
-	or	T+32(sp)
-	stax	T+32(sp)
+	or	T+R+32(sp)
+	stax	T+R+32(sp)
 	ldax	T+11(sp)
 	mulu	T(sp)
-	stax	T+33(sp)
+	stax	T+R+33(sp)
 	ldax	T+12(sp)
 	mul	T(sp)
-	or	T+33(sp)
-	stax	T+33(sp)
+	or	T+R+33(sp)
+	stax	T+R+33(sp)
 	ldax	T+12(sp)
 	mulu	T(sp)
-	stax	T+34(sp)
+	stax	T+R+34(sp)
 	ldax	T+13(sp)
 	mul	T(sp)
-	or	T+34(sp)
-	stax	T+34(sp)
+	or	T+R+34(sp)
+	stax	T+R+34(sp)
 	ldax	T+13(sp)
 	mulu	T(sp)
-	stax	T+35(sp)
+	stax	T+R+35(sp)
 	br	done
 unshifted:
 	ldax	T+10(sp)
-	stax	T+32(sp)
+	stax	T+R+32(sp)
 	ldax	T+11(sp)
-	stax	T+33(sp)
+	stax	T+R+33(sp)
 	ldax	T+12(sp)
-	stax	T+34(sp)
+	stax	T+R+34(sp)
 	ldax	T+13(sp)
-	stax	T+35(sp)
+	stax	T+R+35(sp)
 done:
 	ldax	T+27(sp)
 	btst	7
 	bnz	2$
 	spix
-	adx	#T+32
+	adx	#T+R+32
 	jal	neg4			; the result negated in place
 2$:	ads	#30
 	lra

@@ -630,3 +630,37 @@ a byte went from 17 words to 3.  test_rot.
   stack at 0(sp), `spTop ()` in gen.c, `T` in the library's .s): still to do
   are `ret #imm8` constants (1 word per constant byte), the plain
   `adc`/`sub`/`cmp` with the real carry, the divider's 16-bit result in RA.
+
+The third chip (2026-10-20, `--rev3`, ttsky26d `REV3.md`): IX / SP / RA
+24 bits, three-byte pairs, a flat 8 MB.  In gen.c: `PAIR_BYTES` (2 or 3)
+wherever a pair is pushed, popped or moved (`sra`, `push ix`, `ldxx` /
+`stxx`, the ISR prologue, the far-stack window's `push ix`), `G.ix.size`
+so that a near (2-byte, top cleared) and a far (3-byte) load of the same
+slot are told apart, `ixLoadBytes` (tax / taxu / taxh through A, the
+bytes whose own load needs IX parked first), `ldxf` for code and far
+symbols in `ixLoadSym` and the far direct accesses, `txah` for the
+generic space test, the third byte of a symbol as `#((sym + off) >> 16)`
+in `immArg` (the assembler's R_HIB turned into R_PAG0 on the byte
+relocation, the linker's LISA code gives the pointer's byte), the
+address of a stack object as spix / adx (tracked) and txa / txau / txah,
+genCall without the trampoline (`ldxf #f; call ix` for a far call,
+`jal` for a function of this unit - static or already defined - or a
+`__nonbanked` one; the result of 3 bytes by `stxx`, of 2 through A),
+genDivMod reading the high byte whole from RA.  main.c: the sizes
+patched into the port table (far / generic / function pointers 3, no
+banked overhead), `default_local_map` xdata and `noOverlay` in every
+model (a stack anywhere: `&local` is far), the startup with ldxf and a
+3-byte destination pointer kept with `stxx`.  The generic code: an
+`__at` object beyond 0x1ff is `x_abs` (SDCCmem.c), `istack`'s pointer
+type is FPOINTER under rev 3, the width-narrowing pass leaves a signed
+index wide when the pointer is 3 bytes (SDCCopt.c: `p + (int)i` adds
+all three bytes), the pointer initializers are three `.byte`s
+(SDCCglue.c), `lisaCodeScale` is the identity under packed constants
+(SDCCval.c - a latent bug of `--pack-const`).  Found on the way: the
+simulator's `div` / `rem` with a stack divisor and `shl16` / `shr16`
+masked the stack address to 15 bits (wrong with the stack above 32K),
+and the chip's `call ix` / `jmp ix` with bank 0 in the pointer now keep
+the current bank (the RTL, lisa_sim, REV3.md).  Not done: `lisa_cdb`'s
+frames for the 3-byte RA, lisa_pydb / lisa_ide reading the debug port's
+upper bytes, the far-global access (`push ix; ldxf; ldax; pop ix`) when
+IX is known free.

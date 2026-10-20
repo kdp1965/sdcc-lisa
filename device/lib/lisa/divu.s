@@ -79,102 +79,102 @@ __moduint:
 __divsint:
 	ads	#-2
 	sra
-	ldax	T+5(sp)			; the signs differ: a negative quotient
-	xor	T+7(sp)
+	ldax	T+R+5(sp)			; the signs differ: a negative quotient
+	xor	T+R+7(sp)
 	andi	#0x80
 	br	sdiv16
 __modsint:
 	ads	#-2
 	sra
-	ldax	T+5(sp)			; the dividend's sign is the remainder's
+	ldax	T+R+5(sp)			; the dividend's sign is the remainder's
 	andi	#0x80
 	ldc	#0
 	adc	#0x01
 sdiv16:
 	push	a
-	ldax	T+6(sp)
+	ldax	T+R+6(sp)
 	btst	7
 	bnz	1$
 	spix
-	adx	#T+5
+	adx	#T+R+5
 	jal	neg2			; a = -a
-1$:	ldax	T+8(sp)
+1$:	ldax	T+R+8(sp)
 	btst	7
 	bnz	2$
 	spix
-	adx	#T+7
+	adx	#T+R+7
 	jal	neg2			; b = -b
 2$:	ldax	T(sp)
 	btst	0
 	bz	umod16			; Z = bit 0
 udiv16:
-	ldax	T+5(sp)
-	lddiv	T+6(sp)
-	ldax	T+8(sp)			; b high
+	ldax	T+R+5(sp)
+	lddiv	T+R+6(sp)
+	ldax	T+R+8(sp)			; b high
 	push	a
 	push	a			; T(sp), T+1(sp): b high; result pair 6,7; a 8,9; b 10,11
-	ldax	T+9(sp)
+	ldax	T+R+9(sp)
 	div	0, T+1(sp)		; A = q low, RA = q
-	stax	T+5(sp)
+	stax	T+R+5(sp)
 	xchg	ra
 	txau
 	andi	#0x7f			; q high - except that the silicon leaves 0 there for b == 1
 	push	a			; T(sp); b high T+2(sp); result pair 7,8; a 9,10; b 11,12
-	ldax	T+10(sp)
+	ldax	T+R+10(sp)
 	cpi	#0x01
 	bnz	3$
 	ldax	T+2(sp)
 	cpi	#0x00
 	bnz	3$
-	ldax	T+9(sp)			; b == 1: q = a
+	ldax	T+R+9(sp)			; b == 1: q = a
 	stax	T(sp)
 3$:
 	pop	a
-	stax	T+6(sp)
+	stax	T+R+6(sp)
 	ads	#2
 	br	done16
 umod16:
-	ldax	T+5(sp)
-	lddiv	T+6(sp)
-	ldax	T+8(sp)			; b high
+	ldax	T+R+5(sp)
+	lddiv	T+R+6(sp)
+	ldax	T+R+8(sp)			; b high
 	push	a
 	push	a			; T(sp), T+1(sp): b high; result pair 6,7; a 8,9; b 10,11
-	ldax	T+9(sp)
+	ldax	T+R+9(sp)
 	rem	0, T+1(sp)		; A = r low, RA = r
-	stax	T+5(sp)
+	stax	T+R+5(sp)
 	ldax	T+1(sp)
 	btst	7			; Z = bit 7 of b high
 	bz	4$			; b >= 0x8000: r may not fit the 15 bits of RA
 	xchg	ra
 	txau
 	andi	#0x7f
-	stax	T+6(sp)
+	stax	T+R+6(sp)
 	ads	#2
 	br	done16
 4$:
 	; q = a / b is 0 or 1, so r high = a high - q * b high - (a low < r low)
-	ldax	T+7(sp)
-	lddiv	T+8(sp)
-	ldax	T+9(sp)
+	ldax	T+R+7(sp)
+	lddiv	T+R+8(sp)
+	ldax	T+R+9(sp)
 	div	0, T+1(sp)		; A = q
 	mul	T+1(sp)			; q * b high
 	push	a			; T(sp); b high 2,3; result pair 7,8; a 9,10; b 11,12
-	ldax	T+6(sp)			; r low
+	ldax	T+R+6(sp)			; r low
 	cpi	#0x01			; C = (r low == 0): cmp would report a borrow against 0
-	ldax	T+8(sp)			; a low
+	ldax	T+R+8(sp)			; a low
 	ifte	nc
-	cmp	T+6(sp)			; C = a low < r low, the borrow of the low byte
+	cmp	T+R+6(sp)			; C = a low < r low, the borrow of the low byte
 	ldc	#0
-	ldax	T+9(sp)			; a high
+	ldax	T+R+9(sp)			; a high
 	sub	T(sp)			; - q * b high - borrow
-	stax	T+7(sp)
+	stax	T+R+7(sp)
 	ads	#3
 done16:
 	ldax	T(sp)
 	btst	7
 	bnz	5$
 	spix
-	adx	#T+3
+	adx	#T+R+3
 	jal	neg2			; the result negated in place
 5$:	ads	#1
 	lra
@@ -204,7 +204,7 @@ __divschar:
 	ads	#-2			; the result's pair
 	sra
 	push	a			; a T(sp); RA 2,3; pair 4,5; b T+5(sp)
-	xor	T+5(sp)			; the signs differ: a negative quotient
+	xor	T+R+5(sp)			; the signs differ: a negative quotient
 	andi	#0x80
 	push	a
 	jal	absa
@@ -243,7 +243,7 @@ __divsuchar:				; a unsigned, b signed
 	ads	#-2
 	sra
 	push	a
-	ldax	T+5(sp)
+	ldax	T+R+5(sp)
 	andi	#0x80
 	push	a
 	jal	absb
@@ -275,19 +275,19 @@ div8:
 	ldax	T(sp)
 	btst	0
 	bz	1$			; Z = bit 0: remainder
-	ldax	T+6(sp)
+	ldax	T+R+6(sp)
 	div	3
 	br	2$
-1$:	ldax	T+6(sp)
+1$:	ldax	T+R+6(sp)
 	rem	3
-2$:	stax	T+4(sp)			; the result, 0..255, as an int
+2$:	stax	T+R+4(sp)			; the result, 0..255, as an int
 	ldi	#0x00
-	stax	T+5(sp)
+	stax	T+R+5(sp)
 	ldax	T(sp)
 	btst	7
 	bnz	3$
 	spix
-	adx	#T+4
+	adx	#T+R+4
 	jal	neg2			; negated as 16 bits
 3$:	ads	#2
 	lra
@@ -307,14 +307,14 @@ absa:
 	stax	T+1(sp)
 9$:	ret
 absb:
-	ldax	T+6(sp)
+	ldax	T+R+6(sp)
 	btst	7
 	bnz	9$
 	ldi	#0xff
-	sub	T+6(sp)
+	sub	T+R+6(sp)
 	ldc	#1
 	adc	#0x00
-	stax	T+6(sp)
+	stax	T+R+6(sp)
 9$:	ret
 
 ; ---- bytes, a byte back in A -------------------------------------------
@@ -330,7 +330,7 @@ absb:
 __divschar8:
 	sra
 	push	a			; a T(sp); RA 2,3; b T+3(sp)
-	xor	T+3(sp)
+	xor	T+R+3(sp)
 	andi	#0x80
 	push	a
 	jal	absa8
@@ -365,7 +365,7 @@ __moduschar8:
 __divsuchar8:				; a unsigned, b signed
 	sra
 	push	a
-	ldax	T+3(sp)
+	ldax	T+R+3(sp)
 	andi	#0x80
 	push	a
 	jal	absb8
@@ -382,10 +382,10 @@ div8b:
 	ldax	T(sp)
 	btst	0
 	bz	1$			; Z = bit 0: remainder
-	ldax	T+4(sp)
+	ldax	T+R+4(sp)
 	div	3
 	br	2$
-1$:	ldax	T+4(sp)
+1$:	ldax	T+R+4(sp)
 	rem	3
 2$:	stax	T+1(sp)			; the result, negated in place when the signs say so
 	ldax	T(sp)
@@ -412,14 +412,14 @@ absa8:
 	stax	T+1(sp)
 9$:	ret
 absb8:
-	ldax	T+4(sp)
+	ldax	T+R+4(sp)
 	btst	7
 	bnz	9$
 	ldi	#0xff
-	sub	T+4(sp)
+	sub	T+R+4(sp)
 	ldc	#1
 	adc	#0x00
-	stax	T+4(sp)
+	stax	T+R+4(sp)
 9$:	ret
 
 ; the two bytes at IX negated: ~x + 1 with the carry through adc #0 (ldi

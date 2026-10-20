@@ -448,6 +448,62 @@ DBANK2 unsigned char buf[4096];      /* in data bank 2 */
   and 3 at one window address, byte and int objects, a loop, a
   read-modify-write across the two, ordinary data alongside.
 
+## The third chip (`--rev3`)
+
+The twenty-four-bit branch (ttsky26d-um-lisa-ttlc `REV3.md`): IX, SP and
+RA are 24 bits, `sra` / `lra`, `push ix` / `pop ix` and `ldxx` / `stxx`
+move three bytes, the data space is a flat 8 MB and a code pointer
+carries its bank, so the trampoline and the bank registers (DB, SB, KB)
+are gone.  `--rev3` implies `--rev2` (the stack convention, the adder,
+the divider) and `--pack-const` (the constants are read from the
+pointer's own bank), links `lib/lisa-rev3` and defines
+`__SDCC_LISA_REV3`.
+
+* Pointers: a `__near` pointer is 2 bytes and reaches the first 64K of
+  data (the direct data of the small model; a `__near` object is one in
+  DATA); every other pointer - generic (unqualified), `__far` / `__xdata`,
+  `__code`, a function pointer, the address of a stack object in every
+  model - is 3 bytes, the code-space marker in bit 23.  `sizeof (char *)`
+  is 3.  An `__at` object beyond 0x1ff is far data (its pointers are the
+  24-bit ones: it may lie beyond 64K).
+* A generic read is `jal __gptrget` as before (`txah; btst 7` picks RAM or
+  `lda (ix++)`); a far pointer dereferences with `ldxx n(sp); ldax k(ix)`;
+  a near one adds `ldi #0; taxh`.  A pointer is pushed byte by byte
+  (`push ix` lays the bytes out the other way round).
+* Calls: a function defined in the same translation unit (above the call,
+  or `static`), or declared `__nonbanked`, is a `jal`; any other
+  `__banked` function, and every other function under `--model-huge`, is
+  `ldxf #f; call ix` (4 words; `ret` brings the caller's bank back).  The
+  callee's frame is the same whichever way it was entered, and `main` may
+  live in a bank (`__sdcc_program_startup` calls it through a pointer).
+  A 3-byte function pointer is {1, bank, window word}; bank 0 in a pointer
+  means the lower 16K words, which every bank sees, and `call ix` keeps
+  the current bank for it.
+* Frames: a saved RA is 3 bytes, an interrupt handler saves 8 (A, IX, RA,
+  the carry shadow); a two-byte result still comes back in IX, a 3-byte
+  pointer too.  `jmp_buf` is 8 bytes.  Unsigned 8- and 16-bit `/` and
+  `%` are always on the divider (its results come whole from RA).
+* The stack can be anywhere: `--stack-loc 0x1fffff` puts it at 2 MB (the
+  suites run that way; the 128-byte default is for a board without the
+  PSRAM).  A `__near` pointer cannot reach a stack above 64K: pass such
+  locals through generic pointers.
+* Initializers: a 3-byte pointer is `.byte sym, (sym >> 8), (sym >> 16)`;
+  `sdaslisa` and `sdldlisa` give the third byte of any symbol's 24-bit
+  pointer (`ldi #((sym) >> 16)` as well), and `ldxf #sym` loads the whole
+  pointer.
+* Code size against `--pack-const` on the second chip: about 2% to 17%
+  more (the third byte of every pointer and every saved pair; test_strs
+  is the worst of the suite, test_divl the best).
+* `sdcc_test`: `make check REV3=1` (`*_rev3.ihx` on `lisa_sim --rev3`;
+  `test_rev3c.c` is the chip's own test: data at 1 MB, across the 64K
+  boundary, near against generic pointers, function pointers, setjmp,
+  the divider); `test/run_suite.sh chip REV3=1` in the RTL repository
+  runs the same programs on the chip testbench; `make test-lisa
+  LISA_REV3=1` runs SDCC's regression suite.  The library's hand-written
+  routines come in rev-3 forms (`*3.s`: the string helpers, setjmp, the
+  generic pointer reads) or carry the saved RA's third byte as `R` from
+  `lisamodel.inc` (the divisions, `bf16fs.s`).
+
 ## Regression testing
 
 SDCC's own suite (`support/regression`, ~1650 test files, ~6000 generated

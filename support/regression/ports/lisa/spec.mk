@@ -4,17 +4,19 @@
 # Point LISA_SIM at the simulator binary if it is not next to this tree:
 #   make test-lisa LISA_SIM=/path/to/lisa_sim
 # LISA_REV2=1 runs the suite for the second chip: sdcc --rev2 (its stack
-# convention, the lisa-rev2 library) on lisa_sim --rev2.  rm -rf gen/lisa
-# results/lisa between the two modes: they share the directories.
+# convention, the lisa-rev2 library) on lisa_sim --rev2; LISA_REV3=1 for
+# the third (sdcc --rev3: 24-bit pointers, the lisa-rev3 library, the
+# stack at 2 MB) on lisa_sim --rev3.  rm -rf gen/lisa results/lisa
+# between the modes: they share the directories.
 
 LISA_SIM ?= $(top_srcdir)/../lisa_sim/lisa_sim
-LISA_MODEL = $(if $(LISA_REV2),lisa-rev2,lisa)
+LISA_MODEL = $(if $(LISA_REV3),lisa-rev3,$(if $(LISA_REV2),lisa-rev2,lisa))
 
 # simulation budget in cycles; _exitEmu() executes `brk`, which halts the
 # simulator, so a passing test never runs out the budget
 SIM_CYCLES = 200000000
 
-EMU = $(LISA_SIM) -b -c $(SIM_CYCLES) $(if $(LISA_REV2),--rev2)
+EMU = $(LISA_SIM) -b -c $(SIM_CYCLES) $(if $(LISA_REV3),--rev3,$(if $(LISA_REV2),--rev2))
 EMU_INPUT =
 
 ifdef SDCC_BIN_PATH
@@ -33,7 +35,7 @@ endif
 
 # the simulator has 32K of data; the port's default stack (0x7f) is for the
 # 128-byte RAM of the TT07 chip
-SDCCFLAGS += -mlisa --less-pedantic --stack-loc 0x7fff $(if $(LISA_REV2),--rev2)
+SDCCFLAGS += -mlisa --less-pedantic $(if $(LISA_REV3),--rev3 --stack-loc 0x1fffff,--stack-loc 0x7fff $(if $(LISA_REV2),--rev2))
 LINKFLAGS += lisa.lib
 
 OBJEXT = .rel

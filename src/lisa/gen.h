@@ -86,6 +86,7 @@ void genLisaCode (iCode *);
 extern bool lisa_tt07_cache;    /* --tt07-cache: the data behind the TT07 cache (main.c) */
 extern bool lisa_rev2;          /* --rev2: code for the second chip (main.c) */
 extern bool lisa_pack_const;    /* --pack-const: constants packed, read with lda (ix++) (main.c) */
+extern bool lisa_rev3;          /* --rev3: the third chip - 24-bit IX / SP / RA, 3-byte pointers and pairs (main.c) */
 float dryLisaiCode (iCode *ic);
 void lisaDryRunInit (iCode *ic);
 bool lisaNotUsed (const char *what, lineNode *endPl, lineNode *head);

@@ -162,7 +162,9 @@ bool
 lisaRetInIX (sym_link *ftype)
 {
   sym_link *rtype = ftype->next;
-  return (getSize (rtype) == 2 && !IS_STRUCT (rtype) && FUNC_SDCCCALL (ftype) != 0);
+  int size = getSize (rtype);
+  /* the third chip: a three-byte pointer as well (IX is 24 bits there) */
+  return ((size == 2 || lisa_rev3 && size == 3) && !IS_STRUCT (rtype) && FUNC_SDCCCALL (ftype) != 0);
 }
 
 /* A temporary that exists only to be returned: one definition, in the
@@ -202,7 +204,7 @@ lisaRetIXTemp (const symbol *sym)
 {
   if (!currFunc || !sym || !sym->isitmp || sym->_isparm || sym->remat || !lisaRetInIX (currFunc->type))
     return (false);
-  if (getSize (sym->type) != 2 || bitVectnBitsOn (sym->defs) != 1 || bitVectnBitsOn (sym->uses) != 1)
+  if (getSize (sym->type) != getSize (currFunc->type->next) || bitVectnBitsOn (sym->defs) != 1 || bitVectnBitsOn (sym->uses) != 1)
     return (false);
   const iCode *dic = hTabItemWithKey (iCodehTab, bitVectFirstBit (sym->defs));
   const iCode *uic = hTabItemWithKey (iCodehTab, bitVectFirstBit (sym->uses));

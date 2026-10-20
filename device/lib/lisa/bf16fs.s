@@ -91,25 +91,39 @@ fs_take:
 .macro	ARGS
 	sra
 	spix
-	adx	#T+10
+	adx	#T+R+10
 	jal	fs_round
+.if LISA_REV3
+	txa			; the third chip's push ix moves three bytes: the two
+	push	a		; halves pushed by hand, the high byte (IX[7:0]) first
+	txau
+	push	a		; b
+.else
 	push	ix		; b
+.endif
 	spix
-	adx	#T+8
+	adx	#T+R+8
 	jal	fs_round
+.if LISA_REV3
+	txa
+	push	a
+	txau
+	push	a		; a
+.else
 	push	ix		; a
+.endif
 .endm
 
 ; the bf16_t result in IX into the float's top half (now 9,T+9(sp): a 1,2;
 ; b 3,4; RA 5,6; the float's slot 7..10)
 .macro	RESULT
 	txa
-	stax	T+8(sp)
+	stax	T+R+8(sp)
 	txau
-	stax	T+9(sp)
+	stax	T+R+9(sp)
 	ldi	#0x00
-	stax	T+6(sp)
-	stax	T+7(sp)
+	stax	T+R+6(sp)
+	stax	T+R+7(sp)
 	ads	#4
 	lra
 	ret

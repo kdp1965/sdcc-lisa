@@ -37,12 +37,14 @@ static char *lisa_keywords[] = {
   "code",
   "critical",
   "data",
+  "far",
   "interrupt",
   "naked",
   "near",
   "nonbanked",
   "reentrant",
   "sfr",
+  "xdata",
   NULL
 };
 
@@ -112,9 +114,96 @@ lisa_genIVT (struct dbuf_s *oBuf, symbol **intTable, int intCount)
    is 1(sp)); the second chip's is 0(sp) */
 #define SPO(n) ((n) - (lisa_rev2 ? 1 : 0))
 
+/* The third chip (--rev3): the stack pointer and the far areas are 24-bit
+   addresses (ldxf), the top of the stack is 0(sp), the pairs are three
+   bytes, and the copy loops keep the destination as a three-byte pointer
+   that ldxx / stxx move whole.  Frame of the loops: 0..2(sp) the
+   destination, 3..4(sp) the count. */
+static void
+lisa_genInitStartupRev3 (FILE *of)
+{
+  static const struct
+  {
+    const char *src, *dst;
+  } copies[] = { { "INITIALIZER", "INITIALIZED" }, { "FINITIALIZER", "FINITIALIZED" } };
+  static const char *const zeroes[] = { "DATA", "FDATA" };
+  int lbl = 1;
+
+  tfprintf (of, "\t!area\n", STATIC_NAME);
+  fprintf (of, "__sdcc_gsinit_startup::\n");
+
+  fprintf (of, "\tldxf\t#0x%06x\n", options.stack_loc >= 0 ? options.stack_loc & 0x7fffff : 0x00007f);
+  fprintf (of, "\txchg\tsp\n");
+  fprintf (of, "\tamode\t1\n");
+
+  fprintf (of, "\tjal\t___sdcc_external_startup\n");
+  fprintf (of, "\tcpi\t#0\n");
+  fprintf (of, "\tif\tne\n");
+  fprintf (of, "\tjal\t__sdcc_program_startup\n");
+
+  fprintf (of, "\tads\t#-5\n");
+  /* zero DATA (near) and FDATA (anywhere): IX the pointer, the count at 3..4(sp) counting down */
+  for (int z = 0; z < 2; z++)
+    {
+      fprintf (of, "\tldi\t#>l_%s\n", zeroes[z]);
+      fprintf (of, "\tstax\t4(sp)\n");
+      fprintf (of, "\tldi\t#<l_%s\n", zeroes[z]);
+      fprintf (of, "\tstax\t3(sp)\n");
+      fprintf (of, "\t%s\t#s_%s\n", z ? "ldxf" : "ldx", zeroes[z]);
+      fprintf (of, "%05d$:\n", lbl);
+      fprintf (of, "\tldax\t3(sp)\n");
+      fprintf (of, "\tor\t4(sp)\n");
+      fprintf (of, "\tbz\t%05d$\n", lbl + 1);
+      fprintf (of, "\tldi\t#0\n");
+      fprintf (of, "\tstax\t0(ix)\n");
+      fprintf (of, "\tadx\t#1\n");
+      fprintf (of, "\tdcx\t3(sp)\n");
+      fprintf (of, "\tif\tc\n");
+      fprintf (of, "\tdcx\t4(sp)\n");
+      fprintf (of, "\tbr\t%05d$\n", lbl);
+      fprintf (of, "%05d$:\n", lbl + 1);
+      lbl += 2;
+    }
+  /* the copies from the packed constants: lda (ix++) reads a byte from the
+     source's own bank, the destination pointer swapped through IX */
+  for (int c = 0; c < 2; c++)
+    {
+      fprintf (of, "\tldxf\t#s_%s\n", copies[c].dst);
+      fprintf (of, "\tstxx\t0(sp)\n");
+      fprintf (of, "\tldi\t#>l_%s\n", copies[c].dst);
+      fprintf (of, "\tstax\t4(sp)\n");
+      fprintf (of, "\tldi\t#<l_%s\n", copies[c].dst);
+      fprintf (of, "\tstax\t3(sp)\n");
+      fprintf (of, "\tldxf\t#s_%s\n", copies[c].src);
+      fprintf (of, "%05d$:\n", lbl);
+      fprintf (of, "\tldax\t3(sp)\n");
+      fprintf (of, "\tor\t4(sp)\n");
+      fprintf (of, "\tbz\t%05d$\n", lbl + 1);
+      fprintf (of, "\tlda\t(ix++)\n");
+      fprintf (of, "\tpush\tix\n");           /* the slots are 3 deeper: the destination at 3..5(sp) */
+      fprintf (of, "\tldxx\t3(sp)\n");
+      fprintf (of, "\tstax\t0(ix)\n");
+      fprintf (of, "\tadx\t#1\n");
+      fprintf (of, "\tstxx\t3(sp)\n");
+      fprintf (of, "\tpop\tix\n");
+      fprintf (of, "\tdcx\t3(sp)\n");
+      fprintf (of, "\tif\tc\n");
+      fprintf (of, "\tdcx\t4(sp)\n");
+      fprintf (of, "\tbr\t%05d$\n", lbl);
+      fprintf (of, "%05d$:\n", lbl + 1);
+      lbl += 2;
+    }
+  fprintf (of, "\tads\t#5\n");
+}
+
 static void
 lisa_genInitStartup (FILE *of)
 {
+  if (lisa_rev3)
+    {
+      lisa_genInitStartupRev3 (of);
+      return;
+    }
   tfprintf (of, "\t!area\n", STATIC_NAME);
   fprintf (of, "__sdcc_gsinit_startup::\n");
 
@@ -352,6 +441,19 @@ lisa_reg_parm (sym_link *l, bool reentrant)
    Links lib/lisa-rev2k; defines __SDCC_LISA_PACK_CONST. */
 #define OPTION_PACK_CONST "--pack-const"
 
+/* --rev3: a program for the third chip (ttsky26d-um-lisa-ttlc branch
+   twenty-four-bit, REV3.md): IX, SP and RA are 24 bits, the pairs (sra /
+   lra, push ix / pop ix, ldxx / stxx) move three bytes, the data space is
+   a flat 8 MB, the code banks are reached through 24-bit code pointers
+   (ldxf #f; call ix) without a trampoline, and the constants are packed
+   (--pack-const) and read from the pointer's own bank.  Pointers: a
+   __near one is 2 bytes (the first 64K of data), everything else -
+   __far / __xdata, generic, __code, functions - 3 bytes with the code
+   marker in bit 23.  Implies --rev2 (the stack convention, the adder, the
+   divider) and --pack-const; links lib/lisa-rev3; defines
+   __SDCC_LISA_REV3. */
+#define OPTION_REV3 "--rev3"
+
 #define OPTION_STACK_SIZE "--stack-size"
 
 static OPTION lisa_options[] = {
@@ -360,6 +462,7 @@ static OPTION lisa_options[] = {
   {0, OPTION_STACK_SIZE, NULL, "<nnnn> bytes reserved for the stack (--tt07-cache: 2K unless given)"},
   {0, OPTION_REV2, NULL, "code for the second chip (ttsky26c): bf16_add on its hardware adder (lib/lisa-rev2), __SDCC_LISA_REV2 defined"},
   {0, OPTION_PACK_CONST, NULL, "constants packed two to a code word in the bank KB, read with lda (ix++) (the second chip; implies --rev2; lib/lisa-rev2k)"},
+  {0, OPTION_REV3, NULL, "code for the third chip (24-bit IX/SP/RA, 3-byte pointers, flat 8 MB data; implies --rev2 --pack-const; lib/lisa-rev3)"},
   {0, NULL}
 };
 
@@ -367,6 +470,19 @@ static bool lisa_bf16_float = false;
 bool lisa_tt07_cache = false;
 bool lisa_rev2 = false;
 bool lisa_pack_const = false;
+bool lisa_rev3 = false;
+
+/* the packed constant areas (--pack-const, --rev3), before the memory maps
+   are made from the port table's names (its members are const) */
+static void
+lisaPackedConstAreas (void)
+{
+  *(const char **) &port->mem.const_name = "CONST (CODE,KDATA)";
+  *(const char **) &port->mem.cabs_name = "CABS (ABS,CODE,KDATA)";
+  *(const char **) &port->mem.xinit_name = "FINITIALIZER (CODE,KDATA)";
+  *(const char **) &port->mem.initializer_name = "INITIALIZER (CODE,KDATA)";
+  options.const_seg = Safe_strdup ("CONST (CODE,KDATA)");   /* setDefaultOptions copied the table's */
+}
 
 static bool
 lisa_parseOptions (int *pargc, char **argv, int *i)
@@ -390,13 +506,22 @@ lisa_parseOptions (int *pargc, char **argv, int *i)
     {
       lisa_pack_const = true;
       lisa_rev2 = true;
-      /* the packed areas, before the memory maps are made from the port
-         table's names (its members are const) */
-      *(const char **) &port->mem.const_name = "CONST (CODE,KDATA)";
-      *(const char **) &port->mem.cabs_name = "CABS (ABS,CODE,KDATA)";
-      *(const char **) &port->mem.xinit_name = "FINITIALIZER (CODE,KDATA)";
-      *(const char **) &port->mem.initializer_name = "INITIALIZER (CODE,KDATA)";
-      options.const_seg = Safe_strdup ("CONST (CODE,KDATA)");   /* setDefaultOptions copied the table's */
+      lisaPackedConstAreas ();
+      return TRUE;
+    }
+  if (!strcmp (argv[*i], OPTION_REV3))
+    {
+      lisa_rev3 = true;
+      lisa_rev2 = true;
+      lisa_pack_const = true;
+      lisaPackedConstAreas ();
+      /* the pointer sizes: near 2, far / generic / function 3; a __banked
+         function's frame is a plain one (no trampoline) */
+      port->s.far_ptr_size = 3;
+      port->s.ptr_size = 3;
+      port->s.funcptr_size = 3;
+      port->s.banked_funcptr_size = 3;
+      port->stack.banked_overhead = 0;
       return TRUE;
     }
   if (!strncmp (argv[*i], OPTION_STACK_SIZE, strlen (OPTION_STACK_SIZE)))
@@ -430,6 +555,8 @@ lisa_finaliseOptions (void)
     {
       addSet (&preArgvSet, Safe_strdup ("-D__SDCC_LISA_PACK_CONST"));
     }
+  if (lisa_rev3)
+    addSet (&preArgvSet, Safe_strdup ("-D__SDCC_LISA_REV3"));
   /* --codeseg BANKn (a code bank of the second chip, as #pragma bank n):
      the area wants its CODE flag */
   if (options.code_seg && !strncmp (options.code_seg, "BANK", 4) && isdigit ((unsigned char) options.code_seg[4]) && !strchr (options.code_seg, ' '))
@@ -448,6 +575,15 @@ lisa_finaliseOptions (void)
     {
       port->mem.default_local_map = xdata;
       port->mem.default_globl_map = xdata;
+    }
+  /* the third chip: the stack may lie anywhere in the 8 MB, so the
+     address of a stack object is a far (24-bit) pointer in every model
+     (the small model's locals take the overlay class otherwise, whose
+     pointers are near; nothing is overlaid with --stack-auto anyway) */
+  if (lisa_rev3)
+    {
+      port->mem.default_local_map = xdata;
+      options.noOverlay = 1;
     }
   if (lisa_tt07_cache)
     {
@@ -550,7 +686,9 @@ _hasNativeMulFor (iCode *ic, sym_link *left, sym_link *right)
          be read from it, so with a divisor that could be either - not a
          literal, nor a byte for the remainder - the library's __divuint
          / __moduint do it, with the checks */
-      if (result_size == 2 && getSize (left) == 2)
+      /* (the third chip's divider leaves the whole 16-bit result in RA:
+         every unsigned case is native) */
+      if (result_size == 2 && getSize (left) == 2 && !lisa_rev3)
         {
           if (IS_OP_LITERAL (IC_RIGHT (ic)))
             return (ic->op == '/' || operandLitValue (IC_RIGHT (ic)) < 0x8000);
@@ -607,7 +745,7 @@ hasExtBitOp (int op, sym_link *left, int right)
 static const char *
 get_model (void)
 {
-  return lisa_pack_const ? "lisa-rev2k" : lisa_rev2 ? "lisa-rev2" : lisa_tt07_cache ? "lisa-cache" : "lisa";
+  return lisa_rev3 ? "lisa-rev3" : lisa_pack_const ? "lisa-rev2k" : lisa_rev2 ? "lisa-rev2" : lisa_tt07_cache ? "lisa-cache" : "lisa";
 }
 
 /** $1 is always the basename.

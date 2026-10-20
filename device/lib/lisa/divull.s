@@ -64,37 +64,37 @@ __divulonglong:
 	ldamode				; bit 3: interrupts enabled
 	push	a
 	di
-	ldax	20(sp)			; y[1]
+	ldax	20+R(sp)			; y[1]
 	push	a			; the divisor's high byte at 0(sp)
 	ldi	#0
 	tax
 	taxu				; IX = 0: the remainder so far
-	ldax	20(sp)			; y[0]
+	ldax	20+R(sp)			; y[0]
 	div	2, 0(sp)		; 0 / {y[1], y[0]}: the divisor latched
-	ldax	19(sp)			; x[7]
+	ldax	19+R(sp)			; x[7]
 	divc
-	stax	11(sp)			; q[7]
-	ldax	18(sp)			; x[6]
+	stax	11+R(sp)			; q[7]
+	ldax	18+R(sp)			; x[6]
 	divc
-	stax	10(sp)			; q[6]
-	ldax	17(sp)			; x[5]
+	stax	10+R(sp)			; q[6]
+	ldax	17+R(sp)			; x[5]
 	divc
-	stax	9(sp)			; q[5]
-	ldax	16(sp)			; x[4]
+	stax	9+R(sp)			; q[5]
+	ldax	16+R(sp)			; x[4]
 	divc
-	stax	8(sp)			; q[4]
-	ldax	15(sp)			; x[3]
+	stax	8+R(sp)			; q[4]
+	ldax	15+R(sp)			; x[3]
 	divc
-	stax	7(sp)			; q[3]
-	ldax	14(sp)			; x[2]
+	stax	7+R(sp)			; q[3]
+	ldax	14+R(sp)			; x[2]
 	divc
-	stax	6(sp)			; q[2]
-	ldax	13(sp)			; x[1]
+	stax	6+R(sp)			; q[2]
+	ldax	13+R(sp)			; x[1]
 	divc
-	stax	5(sp)			; q[1]
-	ldax	12(sp)			; x[0]
+	stax	5+R(sp)			; q[1]
+	ldax	12+R(sp)			; x[0]
 	divc
-	stax	4(sp)			; q[0]
+	stax	4+R(sp)			; q[0]
 	br	done
 1$:	ldx	#__divull_bits		; the bit-serial loop, with this frame
 	jmp	ix
@@ -111,40 +111,40 @@ __modulonglong:
 	ldamode
 	push	a
 	di
-	ldax	20(sp)
+	ldax	20+R(sp)
 	push	a
 	ldi	#0
 	tax
 	taxu
-	ldax	20(sp)
+	ldax	20+R(sp)
 	div	2, 0(sp)
-	ldax	19(sp)			; x[7]
+	ldax	19+R(sp)			; x[7]
 	divc
-	ldax	18(sp)			; x[6]
+	ldax	18+R(sp)			; x[6]
 	divc
-	ldax	17(sp)			; x[5]
+	ldax	17+R(sp)			; x[5]
 	divc
-	ldax	16(sp)			; x[4]
+	ldax	16+R(sp)			; x[4]
 	divc
-	ldax	15(sp)			; x[3]
+	ldax	15+R(sp)			; x[3]
 	divc
-	ldax	14(sp)			; x[2]
+	ldax	14+R(sp)			; x[2]
 	divc
-	ldax	13(sp)			; x[1]
+	ldax	13+R(sp)			; x[1]
 	divc
-	ldax	12(sp)			; x[0]
+	ldax	12+R(sp)			; x[0]
 	divc
 	txa				; the remainder: IX
-	stax	4(sp)
+	stax	4+R(sp)
 	txau
-	stax	5(sp)
+	stax	5+R(sp)
 	ldi	#0
-	stax	6(sp)
-	stax	7(sp)
-	stax	8(sp)
-	stax	9(sp)
-	stax	10(sp)
-	stax	11(sp)
+	stax	6+R(sp)
+	stax	7+R(sp)
+	stax	8+R(sp)
+	stax	9+R(sp)
+	stax	10+R(sp)
+	stax	11+R(sp)
 	br	done
 2$:	ldx	#__modull_bits
 	jmp	ix

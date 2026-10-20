@@ -42,6 +42,11 @@
 
 #define UNIMPLEMENTED do {wassertl (regalloc_dry_run, "Unimplemented"); cost (500, 500);} while(0)
 
+/* The size of a saved pair - RA by sra / lra, IX by push ix / pop ix, the
+   ldxx / stxx transfers: two bytes, three on the third chip (--rev3: the
+   24-bit registers, ttsky26d REV3.md) */
+#define PAIR_BYTES (lisa_rev3 ? 3 : 2)
+
 static bool regalloc_dry_run;
 static unsigned int regalloc_dry_run_cost_words;
 static float regalloc_dry_run_cost_cycles;
@@ -65,6 +70,7 @@ static struct genState
      AOP_TYPE type;       /* AOP_INVALID: unknown; AOP_IMMD: #sym+off; AOP_STL: SP + off (entry-relative) */
      const char *base;
      int offset;
+     int size;            /* AOP_STK: the bytes of the slot IX mirrors (2, or 3 on the third chip; a near pointer's 2 has IX[23:16] = 0) */
    } ix;
   /* Track content of A: the byte it holds, so that loading it again is
      skipped (see aTrack), and whether Z reflects it */
@@ -81,6 +87,7 @@ G;
 static int spTop (void);
 static void adjustStack (int n);
 static void ixLoadValue (const asmop *aop);
+static void ixLoadBytes (const asmop *aop, int nbytes, bool zero_top);
 static unsigned char litByte (const asmop *aop, int offset);
 static bool loadA (const asmop *aop, int offset);
 
@@ -158,8 +165,8 @@ aTrack (const char *inst, const char *opnd, bool pred)
        !strcmp (inst, "swap") || !strcmp (inst, "swapi") || !strcmp (inst, "shl16") || !strcmp (inst, "shr16")) &&
       sscanf (opnd, "%d(sp%c", &n, &junk) == 2 && junk == ')')
     {
-      int lo = n - G.stack.pushed, bytes = !strcmp (inst, "stxx") ? 2 : 1;
-      if (lo + bytes > G.ix.offset && lo <= G.ix.offset + 1)
+      int lo = n - G.stack.pushed, bytes = !strcmp (inst, "stxx") ? PAIR_BYTES : 1;
+      if (lo + bytes > G.ix.offset && lo <= G.ix.offset + G.ix.size - 1)
         ixInvalidate ();
     }
   /* a remembered stack byte that has been dropped (at or below SP) may be
@@ -169,7 +176,7 @@ aTrack (const char *inst, const char *opnd, bool pred)
   /* what writes A */
   if (!strcmp (inst, "ldax") || !strcmp (inst, "lda") || !strcmp (inst, "ldi") ||
       !strcmp (inst, "pop") && !strcmp (opnd, "a") ||
-      !strcmp (inst, "swap") || !strcmp (inst, "swapi") || !strcmp (inst, "txa") || !strcmp (inst, "txau") ||
+      !strcmp (inst, "swap") || !strcmp (inst, "swapi") || !strcmp (inst, "txa") || !strcmp (inst, "txau") || !strcmp (inst, "txah") ||
       !strcmp (inst, "add") || !strcmp (inst, "adc") || !strcmp (inst, "sub") || !strcmp (inst, "and") ||
       !strcmp (inst, "andi") || !strcmp (inst, "or") || !strcmp (inst, "xor") || !strcmp (inst, "mul") ||
       !strcmp (inst, "mulu") || !strcmp (inst, "shl") || !strcmp (inst, "shr") || !strcmp (inst, "ldac") ||
@@ -228,7 +235,8 @@ aTrack (const char *inst, const char *opnd, bool pred)
       G.a.zvalid = false;
       if (G.a.kind == A_STK && sscanf (opnd, "%d(sp%c", &n, &junk) == 2 && junk == ')')
         {
-          if (n - G.stack.pushed == G.a.stk || !strcmp (inst, "stxx") && n + 1 - G.stack.pushed == G.a.stk)
+          if (n - G.stack.pushed == G.a.stk || !strcmp (inst, "stxx") && n + 1 - G.stack.pushed == G.a.stk ||
+              lisa_rev3 && !strcmp (inst, "stxx") && n + 2 - G.stack.pushed == G.a.stk)
             aInvalidate ();
         }
       else if (G.a.kind == A_STK || G.a.kind == A_DIR)
@@ -519,8 +527,8 @@ farStkAccess (const char *op, const asmop *aop, int offset)
       return;
     }
   emit2 ("push", "ix");
-  cost (1, 2);
-  G.stack.pushed += 2;
+  cost (1, PAIR_BYTES);
+  G.stack.pushed += PAIR_BYTES;
   {
     int n = stkEntryOffset (aop, offset) + G.stack.pushed;
     emit2 ("spix", "");
@@ -536,8 +544,8 @@ farStkAccess (const char *op, const asmop *aop, int offset)
     cost (2, 2);
   }
   emit2 ("pop", "ix");
-  cost (1, 2);
-  G.stack.pushed -= 2;
+  cost (1, PAIR_BYTES);
+  G.stack.pushed -= PAIR_BYTES;
 }
 
 /* Operand text for a direct data / peripheral address. */
@@ -588,6 +596,8 @@ immArg (const asmop *aop, int offset)
     SNPRINTF (buffer, sizeof (buffer), "#<(%s + %d)", aop->aopu.immd, off);
   else if (offset == 1)
     SNPRINTF (buffer, sizeof (buffer), "#>(%s + %d)", aop->aopu.immd, off);
+  else if (offset == 2 && lisa_rev3)
+    SNPRINTF (buffer, sizeof (buffer), "#((%s + %d) >> 16)", aop->aopu.immd, off);   /* the third byte of the 24-bit pointer (the linker's) */
   else if (offset == 2 && aop->aopu.func)
     SNPRINTF (buffer, sizeof (buffer), "#b%s", aop->aopu.immd);   /* a banked function pointer's bank */
   else
@@ -910,11 +920,15 @@ ixLoadSym (const asmop *aop, int offset)
   int off = (aop->aopu.code && !aop->aopu.func && !lisa_pack_const) ? 4 * (aop->aopu.immd_off + offset) : aop->aopu.immd_off + offset;
   if (G.ix.type == AOP_IMMD && G.ix.base && !strcmp (G.ix.base, aop->aopu.immd) && G.ix.offset == off)
     return;
+  /* the third chip: anything in a code bank or beyond 64K of data takes
+     the 24-bit pointer (ldxf, the linker's relocation); a direct data
+     symbol (below 0x200) loads near */
+  const char *ldx = lisa_rev3 && (aop->aopu.code || aop->aopu.far) ? "ldxf" : "ldx";
   if (off)
-    emit2 ("ldx", "#(%s + %d)", aop->aopu.immd, off);
+    emit2 (ldx, "#(%s + %d)", aop->aopu.immd, off);
   else
-    emit2 ("ldx", "#%s", aop->aopu.immd);
-  cost (2, 2);
+    emit2 (ldx, "#%s", aop->aopu.immd);
+  cost (ldx[3] ? 3 : 2, ldx[3] ? 3 : 2);
   G.ix.type = AOP_IMMD;
   G.ix.base = aop->aopu.immd;
   G.ix.offset = off;
@@ -1021,10 +1035,10 @@ loadA (const asmop *aop, int offset)
         {
           /* through IX, which may be in use: save it around the access */
           emit2 ("push", "ix");
-          emit2 ("ldx", "#%s", aop->aopu.immd);
+          emit2 (lisa_rev3 ? "ldxf" : "ldx", "#%s", aop->aopu.immd);
           emit2 ("ldax", "%d(ix)", aop->aopu.immd_off + offset);
           emit2 ("pop", "ix");
-          cost (5, 7);
+          cost (5 + lisa_rev3, 7 + 3 * lisa_rev3);
           break;
         }
       emit2 ("lda", "%s", dirArg (aop, offset));
@@ -1032,6 +1046,23 @@ loadA (const asmop *aop, int offset)
       break;
     case AOP_STL:
       /* the address of a stack object */
+      if (lisa_rev3)
+        {
+          /* 24 bits: IX pointed at it (tracked, so the other bytes reuse it), a byte read out */
+          ixLoadStackAddr (aop->aopu.stk_off);
+          if (offset == 0)
+            emit2 ("txa", "");
+          else if (offset == 1)
+            emit2 ("txau", "");
+          else
+            {
+              emit2 ("txah", "");
+              emit2 ("andi", "#0x7f");
+              cost (1, 1);
+            }
+          cost (1, 1);
+          break;
+        }
       {
         int n = aop->aopu.stk_off + G.stack.pushed;
         if (offset == 0)
@@ -1112,10 +1143,10 @@ storeA (const asmop *aop, int offset)
       if (aop->aopu.far)
         {
           emit2 ("push", "ix");
-          emit2 ("ldx", "#%s", aop->aopu.immd);
+          emit2 (lisa_rev3 ? "ldxf" : "ldx", "#%s", aop->aopu.immd);
           emit2 ("stax", "%d(ix)", aop->aopu.immd_off + offset);
           emit2 ("pop", "ix");
-          cost (5, 7);
+          cost (5 + lisa_rev3, 7 + 3 * lisa_rev3);
           break;
         }
       emit2 ("sta", "%s", dirArg (aop, offset));
@@ -1452,7 +1483,7 @@ setupFrame (const iCode *ic)
      generic code lays the parameters out 3 bytes deeper (the port's
      stack.banked_overhead), the return slot is at that depth too */
   G.stack.param_offset = spTop () + G.stack.ret_size;
-  G.stack.ret_base = spTop () + (IFFUNC_ISBANKEDCALL (ftype) ? 3 : 0);
+  G.stack.ret_base = spTop () + (IFFUNC_ISBANKEDCALL (ftype) && !lisa_rev3 ? 3 : 0);   /* the third chip has no trampoline */
   G.stack.locals_base = 0;
   G.ra_saved = false;
   ixInvalidate ();
@@ -1460,7 +1491,7 @@ setupFrame (const iCode *ic)
   if (IFFUNC_ISNAKED (ftype))
     return;
   G.ra_saved = functionClobbersRA (ic) || IFFUNC_ISISR (ftype);
-  G.stack.pushed = IFFUNC_ISISR (ftype) ? 6 : G.ra_saved ? 2 : 0;
+  G.stack.pushed = IFFUNC_ISISR (ftype) ? 2 + 2 * PAIR_BYTES : G.ra_saved ? PAIR_BYTES : 0;
   G.stack.locals_base = -G.stack.pushed;
   G.stack.pushed += sym->stack;
 }
@@ -1522,20 +1553,20 @@ genFunction (iCode *ic)
       emit2 ("restc", "");
       emit2 ("ldac", "c");
       emit2 ("push", "a");
-      cost (6, 9);
-      G.stack.pushed += 6;
+      cost (6, 5 + 2 * PAIR_BYTES);
+      G.stack.pushed += 2 + 2 * PAIR_BYTES;
     }
   else if (G.ra_saved)
     {
       emit2 ("sra", "");
-      cost (1, 2);
-      G.stack.pushed += 2;
+      cost (1, PAIR_BYTES);
+      G.stack.pushed += PAIR_BYTES;
     }
   G.stack.locals_base = -G.stack.pushed;
 
   if (sym->stack)
     adjustStack (-sym->stack);
-  wassert_bt (G.stack.pushed == sym->stack + (IFFUNC_ISISR (ftype) ? 6 : G.ra_saved ? 2 : 0));
+  wassert_bt (G.stack.pushed == sym->stack + (IFFUNC_ISISR (ftype) ? 2 + 2 * PAIR_BYTES : G.ra_saved ? PAIR_BYTES : 0));
 }
 
 static void
@@ -1568,16 +1599,16 @@ genEndFunction (iCode *ic)
       emit2 ("pop", "ix");
       emit2 ("pop", "a");
       emit2 ("rets", "");
-      cost (7, 11);
-      G.stack.pushed -= 6;
+      cost (7, 7 + 2 * PAIR_BYTES);
+      G.stack.pushed -= 2 + 2 * PAIR_BYTES;
     }
   else
     {
       if (G.ra_saved)
         {
           emit2 ("lra", "");
-          cost (1, 2);
-          G.stack.pushed -= 2;
+          cost (1, PAIR_BYTES);
+          G.stack.pushed -= PAIR_BYTES;
         }
       emit2 ("ret", "");
       cost (1, 2);
@@ -1743,7 +1774,7 @@ genIpush (const iCode *ic)
          ldx sets ix_cond, which push ix puts out as bit 7 of that high
          half: only for a low byte that has the bit set already (so not
          for a symbol address, which the linker could tell but not fix) */
-      if (i >= 1 && left->aop->type == AOP_LIT && (litByte (left->aop, i - 1) & 0x80) && !keep_ix)
+      if (i >= 1 && left->aop->type == AOP_LIT && (litByte (left->aop, i - 1) & 0x80) && !keep_ix && !lisa_rev3)
         {
           emit2 ("ldxs", "#0x%02x%02x", litByte (left->aop, i), litByte (left->aop, i - 1));
           emit2 ("push", "ix");
@@ -1755,7 +1786,25 @@ genIpush (const iCode *ic)
         }
       if (keep && !keep_ix)
         pushA ();                   /* the slot the byte is swapped into */
-      if (left->aop->type == AOP_STL)
+      if (left->aop->type == AOP_STL && lisa_rev3)
+        {
+          /* the 24-bit address of a stack object: IX pointed at it (as seen
+             after the pushes so far; the tracker keeps it entry-relative),
+             the byte read out */
+          ixLoadStackAddr (left->aop->aopu.stk_off);
+          if (i == 0)
+            emit2 ("txa", "");
+          else if (i == 1)
+            emit2 ("txau", "");
+          else
+            {
+              emit2 ("txah", "");
+              emit2 ("andi", "#0x7f");
+              cost (1, 1);
+            }
+          cost (1, 1);
+        }
+      else if (left->aop->type == AOP_STL)
         {
           /* the address of a stack object, as seen after the pushes so far */
           int n = left->aop->aopu.stk_off + G.stack.pushed;
@@ -1796,6 +1845,29 @@ genIpush (const iCode *ic)
   freeAsmop (left);
 }
 
+/* Bytes from .. size-1 of aop <- the sign (A holds byte from-1) or zero
+   extension of the bytes below. */
+static void
+genExtendBytes (const asmop *aop, int from, bool sign)
+{
+  if (sign)
+    {
+      loadA (aop, from - 1);
+      emit2 ("shl", "");
+      emit2 ("ifte", "c");
+      emit2 ("ldi", "#0xff");
+      emit2 ("ldi", "#0x00");
+      cost (4, 4);
+    }
+  else
+    {
+      emit2 ("ldi", "#0x00");
+      cost (1, 1);
+    }
+  for (int i = from; i < aop->size; i++)
+    storeA (aop, i);
+}
+
 /*-----------------------------------------------------------------*/
 /* genCall - generates a call statement                            */
 /*-----------------------------------------------------------------*/
@@ -1825,7 +1897,12 @@ genCall (const iCode *ic)
   /* a call into a code bank goes through ___sdcc_bcall (lisa_isa.md "Bank
      registers"): the callee's bank byte on the stack, IX the function.  A
      may carry the first byte parameter: pushed first, then swapped with the
-     bank (swap n(sp) is right on the second chip, the only one with banks) */
+     bank (swap n(sp) is right on the second chip, the only one with banks).
+     The third chip (--rev3) has no trampoline: a function in another code
+     bank is reached through its 24-bit pointer (ldxf #f; call ix - the
+     bank rides in the pointer, ret brings the caller's back), one of this
+     translation unit (static, or defined above the call: the same
+     --codeseg) or a __nonbanked one by jal */
   const bool banked = IFFUNC_ISBANKEDCALL (ftype);
   const bool a_parm = FUNC_ARGS (ftype) && IS_REGPARM (FUNC_ARGS (ftype)->etype) && !IFFUNC_HASVARARGS (ftype);
   /* a call through a pointer: PCALL, or a CALL of an object of function
@@ -1833,7 +1910,10 @@ genCall (const iCode *ic)
      (adjusted to a pointer: 3 bytes on the stack), whose symbol has no name
      in the code */
   const bool indirect = ic->op == PCALL || (!IS_OP_LITERAL (left) && left->aop->type != AOP_IMMD);
-  if (banked)
+  const bool trampoline = banked && !lisa_rev3;
+  const bool far_call = banked && lisa_rev3 && !indirect && !IS_OP_LITERAL (left) &&
+                        !(IS_STATIC (OP_SYMBOL (left)->etype) || IFFUNC_HASBODY (OP_SYMBOL (left)->type));
+  if (trampoline)
     {
       if (a_parm)
         pushA ();
@@ -1858,40 +1938,49 @@ genCall (const iCode *ic)
     {
       /* function pointer: into IX */
       if (left->aop->type == AOP_IMMD)
-        {
-          emit2 ("ldx", "#%s", left->aop->aopu.immd);
-          cost (2, 2);
-        }
-      else if (left->aop->type == AOP_STK && !stkIsFar (left->aop, 0) && !stkIsFar (left->aop, 1))
+        ixLoadSym (left->aop, 0);
+      else if (left->aop->type == AOP_STK && !stkIsFar (left->aop, 0) && !stkIsFar (left->aop, left->aop->size - 1))
         {
           emit2 ("ldxx", "%s", stkArg (left->aop, 0));
-          cost (1, 2);
+          cost (1, PAIR_BYTES);
         }
       else
         {
           /* the first parameter may already be in A (genSend) */
           if (a_parm)
             pushA ();
-          loadA (left->aop, 0);
-          ixInvalidate ();
-          emit2 ("tax", "");
-          loadA (left->aop, 1);
-          emit2 ("taxu", "");
-          cost (2, 2);
+          ixLoadBytes (left->aop, left->aop->size, false);
           if (a_parm)
             popA ();
         }
-      emit2 (banked ? "jal" : "call", banked ? "___sdcc_bcall" : "ix");
+      emit2 (trampoline ? "jal" : "call", trampoline ? "___sdcc_bcall" : "ix");
       cost (1, 3);
     }
   else if (IS_OP_LITERAL (left))
     {
-      /* a call through a constant: the word address in IX */
-      emit2 ("ldx", "#0x%04x", (unsigned) operandLitValue (left) & 0x7fff);
+      /* a call through a constant: the word address in IX (the third chip:
+         a 24-bit pointer when it names a bank) */
+      unsigned long v = (unsigned long) operandLitValue (left);
+      if (lisa_rev3 && (v & 0xff0000))
+        {
+          emit2 ("ldxf", "#0x%06lx", v & 0xffffff);
+          cost (3, 3);
+        }
+      else
+        {
+          emit2 ("ldx", "#0x%04lx", v & (lisa_rev3 ? 0xffff : 0x7fff));
+          cost (2, 2);
+        }
       emit2 ("call", "ix");
-      cost (3, 5);
+      cost (1, 3);
     }
-  else if (banked)
+  else if (far_call)
+    {
+      emit2 ("ldxf", "#%s", OP_SYMBOL (left)->rname);
+      emit2 ("call", "ix");
+      cost (4, 6);
+    }
+  else if (trampoline)
     {
       emit2 ("ldx", "#%s", OP_SYMBOL (left)->rname);
       emit2 ("jal", "___sdcc_bcall");
@@ -1911,19 +2000,27 @@ genCall (const iCode *ic)
     aInvalidate ();
   if (SomethingReturned)
     {
+      /* the result's operand may be wider than what the function returns
+         (a cast folded into the call): the bytes beyond are its sign or
+         zero extension */
+      const bool rsigned = !IS_PTR (ftype->next) && IS_SPEC (ftype->next) && !SPEC_USIGN (ftype->next) && !IS_BOOL (ftype->next);
       if (ixreturn)
         {
           /* the result in IX: stxx into its slot (IX then still holds
-             it, a deref right after needs no ldxx), or through A */
+             it, a deref right after needs no ldxx), or through A - on the
+             third chip stxx moves three bytes, so a two-byte result goes
+             through A */
           asmop *raop = IC_RESULT (ic)->aop;
+          int n = raop->size < retsize ? raop->size : retsize;
           if (raop->type == AOP_DUMMY)
             ;
-          else if (raop->type == AOP_STK && !stkIsFar (raop, 0) && !stkIsFar (raop, 1))
+          else if (raop->type == AOP_STK && !stkIsFar (raop, 0) && !stkIsFar (raop, n - 1) && n == PAIR_BYTES && raop->size == n)
             {
               emit2 ("stxx", "%s", stkArg (raop, 0));
-              cost (1, 2);
+              cost (1, PAIR_BYTES);
               G.ix.type = AOP_STK;
               G.ix.offset = raop->aopu.bytes[0].byteu.stk;
+              G.ix.size = n;
             }
           else
             {
@@ -1933,12 +2030,25 @@ genCall (const iCode *ic)
               emit2 ("txau", "");
               cost (1, 1);
               storeA (raop, 1);
+              if (n > 2)
+                {
+                  emit2 ("txah", "");
+                  cost (1, 1);
+                  storeA (raop, 2);
+                }
+              if (raop->size > n)
+                genExtendBytes (raop, n, rsigned);
             }
         }
       else if (!bigreturn)
         {
-          if (IC_RESULT (ic)->aop->type != AOP_DUMMY)
-            storeA (IC_RESULT (ic)->aop, 0);
+          asmop *raop = IC_RESULT (ic)->aop;
+          if (raop->type != AOP_DUMMY)
+            {
+              storeA (raop, 0);
+              if (raop->size > 1)
+                genExtendBytes (raop, 1, rsigned);
+            }
         }
       else
         {
@@ -1947,7 +2057,7 @@ genCall (const iCode *ic)
           slot.type = AOP_STK;
           slot.size = retsize;
           for (int i = 0; i < retsize && i < 8; i++)
-            slot.aopu.bytes[i].byteu.stk = spTop () - G.stack.pushed + i + (banked ? 1 : 0);   /* the top of the stack (under a banked call's bank byte) .. */
+            slot.aopu.bytes[i].byteu.stk = spTop () - G.stack.pushed + i + (trampoline ? 1 : 0);   /* the top of the stack (under a banked call's bank byte) .. */
           /* a narrower result (the division support calls): only its bytes.
              High byte first, so that A ends up holding byte 0 for whatever
              uses the result next (the A tracker) */
@@ -1959,7 +2069,7 @@ genCall (const iCode *ic)
     }
 
   /* drop the return slot, the arguments and a banked call's bank byte */
-  adjustStack ((bigreturn ? retsize : 0) + ic->parmBytes + (banked ? 1 : 0));
+  adjustStack ((bigreturn ? retsize : 0) + ic->parmBytes + (trampoline ? 1 : 0));
 }
 
 /*-----------------------------------------------------------------*/
@@ -2088,7 +2198,7 @@ fixBitIntResult (const iCode *ic, bool sign_extend)
 static bool
 indexBase (const asmop *aop)
 {
-  if (aop->size != 2)
+  if (aop->size != 2 && !(lisa_rev3 && aop->size == 3))
     return (false);
   switch (aop->type)
     {
@@ -2097,7 +2207,7 @@ indexBase (const asmop *aop)
     case AOP_STL:
       return (true);
     case AOP_STK:
-      return (!stkIsFar (aop, 0) && !stkIsFar (aop, 1));
+      return (!stkIsFar (aop, 0) && !stkIsFar (aop, aop->size - 1));
     default:
       return (false);
     }
@@ -2114,8 +2224,8 @@ static bool
 genIndexedAddr (const iCode *ic, asmop *laop, asmop *raop)
 {
   operand *result = IC_RESULT (ic);
-  if (!IS_ITEMP (result) || result->aop->type != AOP_STK || result->aop->size != 2 ||
-      stkIsFar (result->aop, 0) || stkIsFar (result->aop, 1))
+  if (!IS_ITEMP (result) || result->aop->type != AOP_STK || result->aop->size != 2 && !(lisa_rev3 && result->aop->size == 3) ||
+      stkIsFar (result->aop, 0) || stkIsFar (result->aop, result->aop->size - 1))
     return (false);
   sym_link *rtype = operandType (result);
   if (!IS_PTR (rtype) || IS_FUNC (rtype->next) || DCL_TYPE (rtype) == CPOINTER || DCL_TYPE (rtype) == GPOINTER)
@@ -2165,10 +2275,24 @@ genIndexedAddr (const iCode *ic, asmop *laop, asmop *raop)
       emit2 ("addaxu", "");
       cost (1, 1);
     }
+  /* a two-byte (near) result on the third chip: stxx would write a third
+     byte; through A instead */
+  if (result->aop->size != PAIR_BYTES)
+    {
+      emit2 ("txa", "");
+      cost (1, 1);
+      storeA (result->aop, 0);
+      emit2 ("txau", "");
+      cost (1, 1);
+      storeA (result->aop, 1);
+      ixInvalidate ();
+      return (true);
+    }
   emit2 ("stxx", "%s", stkArg (result->aop, 0));
-  cost (1, 2);
+  cost (1, PAIR_BYTES);
   G.ix.type = AOP_STK;
   G.ix.offset = result->aop->aopu.bytes[0].byteu.stk;
+  G.ix.size = result->aop->size;
   return (true);
 }
 
@@ -4040,8 +4164,12 @@ genDivMod (const iCode *ic)
         {
           emit2 ("xchg", "ra");
           emit2 ("txau", "");
-          emit2 ("andi", "#0x7f");
-          cost (3, 3);
+          cost (2, 2);
+          if (!lisa_rev3)
+            {
+              emit2 ("andi", "#0x7f");       /* bit 7 is ra_cond; the third chip's txau reads the byte whole */
+              cost (1, 1);
+            }
         }
       storeA (result->aop, 1);
       for (int i = 2; i < size; i++)
@@ -4077,8 +4205,9 @@ ptrType (const operand *op)
     ptype = op->aop->aopu.code ? CPOINTER : POINTER;
   else if (op->aop->type == AOP_LIT)
     /* ldx cannot carry bit 15 (it sets the condition tag), so the space
-       of a literal address has to be decided here */
-    ptype = (ulFromVal (op->aop->aopu.aop_lit) & 0x8000) ? CPOINTER : POINTER;
+       of a literal address has to be decided here (the third chip: the
+       marker is bit 23) */
+    ptype = (ulFromVal (op->aop->aopu.aop_lit) & (lisa_rev3 ? 0x800000 : 0x8000)) ? CPOINTER : POINTER;
   else if (op->aop->type == AOP_STL)
     ptype = POINTER;
   else if (ptype != CPOINTER && ptype != GPOINTER)
@@ -4095,11 +4224,59 @@ litDirect (const asmop *aop, int size)
   if (aop->type == AOP_IMMD)
     return !aop->aopu.far;
   if (aop->type == AOP_LIT)
-    return ((ulFromVal (aop->aopu.aop_lit) & 0xffff) + size <= 0x200);
+    return ((ulFromVal (aop->aopu.aop_lit) & (lisa_rev3 ? 0xffffff : 0xffff)) + size <= 0x200);
   return false;
 }
 
-/* IX <- pointer operand. Clobbers A for pointers in data memory. */
+/* IX <- the two or three bytes of aop through A: tax / taxu / taxh (the
+   third chip), the bytes whose own load needs IX (code space, a far slot,
+   far direct data) parked on the stack first.  A near pointer (two bytes)
+   on the third chip gets IX[23:16] = 0 when zero_top says so. */
+static void
+ixLoadBytes (const asmop *aop, int nbytes, bool zero_top)
+{
+  bool via_ix = aop->type == AOP_CODE || aop->type == AOP_STK || (aop->type == AOP_DIR && aop->aopu.far);
+  ixInvalidate ();
+  if (via_ix)
+    {
+      for (int i = nbytes - 1; i >= 1; i--)
+        {
+          loadA (aop, i);
+          pushA ();
+        }
+      loadA (aop, 0);
+      emit2 ("tax", "");
+      cost (1, 1);
+      for (int i = 1; i < nbytes; i++)
+        {
+          popA ();
+          emit2 (i == 1 ? "taxu" : "taxh", "");
+          cost (1, 1);
+        }
+    }
+  else
+    {
+      loadA (aop, 0);
+      emit2 ("tax", "");
+      cost (1, 1);
+      for (int i = 1; i < nbytes; i++)
+        {
+          loadA (aop, i);
+          emit2 (i == 1 ? "taxu" : "taxh", "");
+          cost (1, 1);
+        }
+    }
+  if (lisa_rev3 && nbytes < 3 && zero_top)
+    {
+      emit2 ("ldi", "#0x00");
+      emit2 ("taxh", "");
+      cost (2, 2);
+    }
+}
+
+/* IX <- pointer operand. Clobbers A for pointers in data memory (and, on
+   the third chip, for a near pointer on the stack: its top byte is
+   cleared through A). */
 static void
 ixLoadPtr (const asmop *aop)
 {
@@ -4111,25 +4288,28 @@ ixLoadPtr (const asmop *aop)
     case AOP_STK:
       {
         int stk = aop->aopu.bytes[0].byteu.stk;
-        if (G.ix.type == AOP_STK && G.ix.offset == stk)
+        if (G.ix.type == AOP_STK && G.ix.offset == stk && G.ix.size == aop->size)
           return;
-        if (stkIsFar (aop, 0) || stkIsFar (aop, 1))
+        if (stkIsFar (aop, 0) || stkIsFar (aop, aop->size - 1))
           {
             /* ldxx is an SP window too: byte by byte, the far loads keep IX */
-            loadA (aop, 0);
-            ixInvalidate ();
-            emit2 ("tax", "");
-            loadA (aop, 1);
-            emit2 ("taxu", "");
-            cost (2, 2);
+            ixLoadBytes (aop, aop->size, true);
           }
         else
           {
             emit2 ("ldxx", "%s", stkArg (aop, 0));
-            cost (1, 2);
+            cost (1, PAIR_BYTES);
+            if (lisa_rev3 && aop->size < 3)
+              {
+                /* a near pointer: ldxx read a third byte that is not its */
+                emit2 ("ldi", "#0x00");
+                emit2 ("taxh", "");
+                cost (2, 2);
+              }
           }
         G.ix.type = AOP_STK;
         G.ix.offset = stk;
+        G.ix.size = aop->size;
       }
       break;
     case AOP_STL:
@@ -4137,48 +4317,69 @@ ixLoadPtr (const asmop *aop)
       break;
     case AOP_DIR:
     case AOP_SFR:
-      if (G.ix.type == AOP_DIR && G.ix.base && !strcmp (G.ix.base, aop->aopu.immd) && G.ix.offset == aop->aopu.immd_off)
+      if (G.ix.type == AOP_DIR && G.ix.base && !strcmp (G.ix.base, aop->aopu.immd) && G.ix.offset == aop->aopu.immd_off && G.ix.size == aop->size)
         return;
-      loadA (aop, 0);
-      emit2 ("tax", "");
-      loadA (aop, 1);
-      emit2 ("taxu", "");
-      cost (2, 2);
+      ixLoadBytes (aop, aop->size, true);
       G.ix.type = AOP_DIR;
       G.ix.base = aop->aopu.immd;
       G.ix.offset = aop->aopu.immd_off;
+      G.ix.size = aop->size;
       break;
     case AOP_LIT:
-      emit2 ("ldx", "#0x%04x", (unsigned) ulFromVal (aop->aopu.aop_lit) & 0x7fff);
-      cost (2, 2);
-      ixInvalidate ();
+      {
+        unsigned long v = ulFromVal (aop->aopu.aop_lit);
+        if (lisa_rev3 && (v & 0xff0000))
+          {
+            emit2 ("ldxf", "#0x%06lx", v & 0xffffff);
+            cost (3, 3);
+          }
+        else
+          {
+            emit2 ("ldx", "#0x%04lx", v & (lisa_rev3 ? 0xffff : 0x7fff));
+            cost (2, 2);
+          }
+        ixInvalidate ();
+      }
       break;
     default:
-      loadA (aop, 0);
-      emit2 ("tax", "");
-      loadA (aop, 1);
-      emit2 ("taxu", "");
-      cost (2, 2);
-      ixInvalidate ();
+      ixLoadBytes (aop, aop->size, true);
     }
 }
 
-/* {ix_cond, IX} <- a two-byte value (a result on its way out).  ldxx
-   from the stack; a literal with bit 15 set is an ldx (which sets
-   ix_cond); the rest through A, the high byte first and parked when its
-   load itself needs IX (code space, a far slot). */
+/* {ix_cond, IX} <- a two- or three-byte value (a result on its way out).
+   ldxx from the stack; a literal with bit 15 set is an ldx (which sets
+   ix_cond); the rest through A, the high bytes first and parked when
+   their load itself needs IX (code space, a far slot). */
 static void
 ixLoadValue (const asmop *aop)
 {
-  if (aop->type == AOP_STK && !stkIsFar (aop, 0) && !stkIsFar (aop, 1))
+  int n = aop->size;
+  if (aop->type == AOP_STK && !stkIsFar (aop, 0) && !stkIsFar (aop, n - 1))
     {
       int stk = aop->aopu.bytes[0].byteu.stk;
-      if (G.ix.type == AOP_STK && G.ix.offset == stk)
+      if (G.ix.type == AOP_STK && G.ix.offset == stk && G.ix.size == n)
         return;
       emit2 ("ldxx", "%s", stkArg (aop, 0));
-      cost (1, 2);
+      cost (1, PAIR_BYTES);
       G.ix.type = AOP_STK;
       G.ix.offset = stk;
+      G.ix.size = n;
+      return;
+    }
+  if (aop->type == AOP_LIT && lisa_rev3)
+    {
+      unsigned long v = ulFromVal (aop->aopu.aop_lit);
+      if (n > 2 || (v & 0xff0000))
+        {
+          emit2 ("ldxf", "#0x%06lx", v & 0xffffff);
+          cost (3, 3);
+        }
+      else
+        {
+          emit2 ("ldx", "#0x%04lx", v & 0xffff);
+          cost (2, 2);
+        }
+      ixInvalidate ();
       return;
     }
   if (aop->type == AOP_LIT && (ulFromVal (aop->aopu.aop_lit) & 0x8000))
@@ -4188,26 +4389,7 @@ ixLoadValue (const asmop *aop)
       ixInvalidate ();
       return;
     }
-  bool via_ix = aop->type == AOP_CODE || aop->type == AOP_STK || (aop->type == AOP_DIR && aop->aopu.far);
-  ixInvalidate ();
-  if (via_ix)
-    {
-      loadA (aop, 1);
-      pushA ();
-      loadA (aop, 0);
-      emit2 ("tax", "");
-      cost (1, 1);
-      popA ();
-    }
-  else
-    {
-      loadA (aop, 0);
-      emit2 ("tax", "");
-      cost (1, 1);
-      loadA (aop, 1);
-    }
-  emit2 ("taxu", "");
-  cost (1, 1);
+  ixLoadBytes (aop, n, false);
 }
 
 /* Would ixLoadPtr go through A (tax / taxu) for this pointer? */
@@ -4221,7 +4403,7 @@ ixLoadPtrClobbersA (const asmop *aop)
     case AOP_STL:
       return (false);
     case AOP_STK:
-      return (stkIsFar (aop, 0) || stkIsFar (aop, 1));
+      return (stkIsFar (aop, 0) || stkIsFar (aop, aop->size - 1) || lisa_rev3 && aop->size < 3);
     default:
       return (true);
     }
@@ -4232,7 +4414,7 @@ static void
 ixNoteStore (const asmop *aop, int offset)
 {
   if (G.ix.type == AOP_STK && aop->type == AOP_STK && offset < 8 &&
-      (aop->aopu.bytes[offset].byteu.stk == G.ix.offset || aop->aopu.bytes[offset].byteu.stk == G.ix.offset + 1))
+      aop->aopu.bytes[offset].byteu.stk >= G.ix.offset && aop->aopu.bytes[offset].byteu.stk < G.ix.offset + G.ix.size)
     ixInvalidate ();
   if (G.ix.type == AOP_DIR && (aop->type == AOP_DIR || aop->type == AOP_SFR) && G.ix.base && !strcmp (G.ix.base, aop->aopu.immd))
     ixInvalidate ();
@@ -4460,12 +4642,13 @@ genPointerGet (const iCode *ic)
       goto release;
     }
 
-  /* generic pointer: bit 15 (ix_cond after the load) selects code space */
+  /* generic pointer: bit 15 (ix_cond after the load) selects code space -
+     bit 23 on the third chip */
   {
     symbol *tlbl_code = regalloc_dry_run ? 0 : newiTempLabel (0);
     symbol *tlbl_done = regalloc_dry_run ? 0 : newiTempLabel (0);
 
-    emit2 ("txau", "");
+    emit2 (lisa_rev3 ? "txah" : "txau", "");
     emit2 ("btst", "7");
     cost (2, 2);
     emitBranch ("bz", tlbl_code);
@@ -4625,7 +4808,7 @@ genPointerPush (const iCode *ic)
 
     if (ptype != CPOINTER)
       {
-        emit2 ("txau", "");
+        emit2 (lisa_rev3 ? "txah" : "txau", "");
         emit2 ("btst", "7");
         cost (2, 2);
         emitBranch ("bz", tlbl_code);
@@ -4932,8 +5115,11 @@ genAddrOf (const iCode *ic)
       stl.type = AOP_STL;
       stl.size = 2;
       stl.aopu.stk_off = (sym->stack >= 0 ? sym->stack + G.stack.param_offset : sym->stack + spTop () + G.stack.locals_base) + off;
+      stl.size = result->aop->size;
       /* both bytes come out of one spix/txa/txau sequence */
-      if (result->aop->type == AOP_STK || result->aop->type == AOP_DIR)
+      if (lisa_rev3)
+        genMove (result->aop, &stl);          /* loadA: IX pointed at it once, txa / txau / txah */
+      else if (result->aop->type == AOP_STK || result->aop->type == AOP_DIR)
         {
           int n = stl.aopu.stk_off + G.stack.pushed;
           emit2 ("spix", "");
@@ -4957,7 +5143,7 @@ genAddrOf (const iCode *ic)
       asmop immd;
       memset (&immd, 0, sizeof (immd));
       immd.type = AOP_IMMD;
-      immd.size = 2;
+      immd.size = result->aop->size > 2 ? result->aop->size : 2;
       immd.aopu.immd = sym->rname;
       immd.aopu.immd_off = off;
       immd.aopu.code = IN_CODESPACE (SPEC_OCLS (sym->etype));
@@ -5747,8 +5933,10 @@ lineWords (const lineNode *pl)
         q++;
       if (q < p + len && *q != ';' && *q != '.' && !(p[len - 1] == ':' && !strchr (q, '\t')))
         {
-          /* two words: ldx, lddiv, and div / rem with a stack operand */
-          if (!strncmp (q, "ldx", 3) && strncmp (q, "ldxx", 4) || !strncmp (q, "lddiv", 5) ||
+          /* three words: ldxf; two: ldx, lddiv, and div / rem with a stack operand */
+          if (!strncmp (q, "ldxf", 4))
+            words += 3;
+          else if (!strncmp (q, "ldx", 3) && strncmp (q, "ldxx", 4) || !strncmp (q, "lddiv", 5) ||
               (!strncmp (q, "div", 3) || !strncmp (q, "rem", 3)) && memchr (q, ',', len - (q - p)))
             words += 2;
           else
@@ -6075,7 +6263,7 @@ lisaNotUsed (const char *what, lineNode *endPl, lineNode *head)
 
       /* unconditional writers */
       if (z && (!strcmp (op, "ldi") || !strcmp (op, "lda") || !strcmp (op, "ldax") || !strcmp (op, "pop") && !strcmp (arg, "a") ||
-                !strcmp (op, "txa") || !strcmp (op, "txau") || !strcmp (op, "add") || !strcmp (op, "adc") ||
+                !strcmp (op, "txa") || !strcmp (op, "txau") || !strcmp (op, "txah") || !strcmp (op, "add") || !strcmp (op, "adc") ||
                 !strcmp (op, "sub") || !strcmp (op, "and") || !strcmp (op, "andi") || !strcmp (op, "or") ||
                 !strcmp (op, "xor") || !strcmp (op, "mul") || !strcmp (op, "mulu") || !strcmp (op, "swap") ||
                 !strcmp (op, "swapi") || !strcmp (op, "shl") || !strcmp (op, "shr") || !strcmp (op, "cpi") ||

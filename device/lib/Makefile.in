@@ -527,6 +527,7 @@ model-lisa:
 	  $(MAKE) MODELFLAGS="-mlisa --tt07-cache" PORT=lisa-cache objects-lisa || exit 1; \
 	  $(MAKE) MODELFLAGS="-mlisa --rev2" PORT=lisa-rev2 objects-lisa || exit 1; \
 	  $(MAKE) MODELFLAGS="-mlisa --pack-const" PORT=lisa-rev2k objects-lisa || exit 1; \
+	  $(MAKE) MODELFLAGS="-mlisa --rev3" PORT=lisa-rev3 objects-lisa || exit 1; \
 	fi
 
 objects-lisa:

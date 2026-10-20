@@ -25,6 +25,12 @@
 #include <sys/stat.h>
 #include "dbuf_string.h"
 
+#if !OPT_DISABLE_LISA
+extern bool lisa_rev3;          /* sdcc -mlisa --rev3 (src/lisa/main.c): 24-bit pointers */
+#else
+#define lisa_rev3 false
+#endif
+
 #ifdef _WIN32
 #include <io.h>
 #else
@@ -812,11 +818,15 @@ _printPointerType (struct dbuf_s *oBuf, const char *name, int size)
     }
   else if (size == 3)
     {
-      if (TARGET_IS_LISA)
+      if (TARGET_IS_LISA && !lisa_rev3)
         /* a banked function pointer: the window address and the function's
            code bank equate (lisa_isa.md "Bank registers"); the linker has
            no third byte of a 15-bit code address to give */
         dbuf_printf (oBuf, "\t.byte %s, (%s >> 8), b%s", name, name, name);
+      else if (TARGET_IS_LISA)
+        /* the third chip's 24-bit pointer: the linker gives the third byte
+           (the code bank, the code-space marker) for (sym >> 16) */
+        dbuf_printf (oBuf, "\t.byte %s, (%s >> 8), (%s >> 16)", name, name, name);
       else if (port->little_endian)
         dbuf_printf (oBuf, "\t.byte %s, (%s >> 8), (%s >> 16)", name, name, name);
       else
@@ -847,6 +857,14 @@ printPointerType (struct dbuf_s *oBuf, const char *name)
 static void
 printGPointerType (struct dbuf_s *oBuf, const char *iname, const char *oname, int type)
 {
+  if (TARGET_IS_LISA && lisa_rev3)
+    {
+      /* the third chip: every far pointer is the 24-bit address, the
+         space in its bits (no tag byte) */
+      _printPointerType (oBuf, iname, 3);
+      dbuf_printf (oBuf, "\n");
+      return;
+    }
   int byte = pointerTypeToGPByte (type, iname, oname);
   int size = (options.model == MODEL_FLAT24) ? 3 : 2;
   if (byte == -1)
@@ -1478,7 +1496,7 @@ printIvalFuncPtr (sym_link * type, initList * ilist, struct dbuf_s *oBuf)
           dbuf_printf (oBuf, "\tret #<%s\n", name);
           dbuf_printf (oBuf, "\tret #>%s\n", name);
         }
-      else if (TARGET_IS_STM8 && FUNCPTRSIZE == 3)
+      else if ((TARGET_IS_STM8 || TARGET_IS_LISA) && FUNCPTRSIZE == 3)
         {
           _printPointerType (oBuf, name, size);
           dbuf_printf (oBuf, "\n");
@@ -1538,6 +1556,11 @@ printIvalCharPtr (symbol * sym, sym_link * type, value * val, struct dbuf_s *oBu
             {
               dbuf_printf (oBuf, "\tret #<%s\n", val->name);
               dbuf_printf (oBuf, IN_CODESPACE (SPEC_OCLS (val->etype)) ? "\tret #>(%s + 0x8000)\n" : "\tret #0\n", val->name);
+            }
+          else if (TARGET_IS_LISA && size == 3)
+            {
+              _printPointerType (oBuf, val->name, 3);   /* the third chip's 24-bit pointer */
+              dbuf_printf (oBuf, "\n");
             }
           else if (port->use_dw_for_init)
             dbuf_tprintf (oBuf, "\t!dws\n", val->name);
@@ -1726,8 +1749,8 @@ printIvalPtr (symbol *sym, sym_link *type, initList *ilist, struct dbuf_s *oBuf)
             dbuf_printf (oBuf, "\t.byte %s,%s", aopLiteral (val, 0), aopLiteral (val, 1));
           else
             dbuf_printf (oBuf, "\t.byte %s,%s", aopLiteral (val, 1), aopLiteral (val, 0));
-          if (IS_GENPTR (val->type))
-            dbuf_printf (oBuf, ",%s\n", aopLiteral (val, 2));
+          if (IS_GENPTR (val->type) || TARGET_IS_LISA)
+            dbuf_printf (oBuf, ",%s\n", aopLiteral (val, 2));   /* lisa: the third byte of the address itself */
           else if (IS_PTR (val->type))
             dbuf_tprintf (oBuf, ",!immedbyte\n", pointerTypeToGPByte (DCL_TYPE (val->type), val->name, sym->name));
           else
@@ -1767,7 +1790,12 @@ printIvalPtr (symbol *sym, sym_link *type, initList *ilist, struct dbuf_s *oBuf)
     }
   else if (size == FARPTRSIZE)
     {
-      if (port->use_dw_for_init)
+      if (TARGET_IS_LISA && size == 3)
+        {
+          _printPointerType (oBuf, val->name, 3);   /* the third chip's 24-bit pointer */
+          dbuf_printf (oBuf, "\n");
+        }
+      else if (port->use_dw_for_init)
         dbuf_tprintf (oBuf, "\t!dws\n", val->name);
       else
         printPointerType (oBuf, val->name);
@@ -2616,6 +2644,8 @@ glue (void)
         fprintf (asmFile, "\tjp\t#_main\n");
       else if(TARGET_PDK_LIKE)
         fprintf (asmFile, "\tgoto\t_main\n");
+      else if(TARGET_IS_LISA && lisa_rev3)
+        fprintf (asmFile, "\tldxf\t#_main\n\tcall\tix\n00001$:\n\tbr\t00001$\n");   /* main may be in a code bank */
       else if(TARGET_IS_LISA)
         fprintf (asmFile, "\tjal\t_main\n00001$:\n\tbr\t00001$\n");
       else

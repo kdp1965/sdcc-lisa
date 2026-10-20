@@ -18,10 +18,12 @@ LISASRC = $(srcdir)/../lisa
 vpath %.s $(LISASRC)
 vpath %.c $(LISASRC)
 
-EXTRA_CFLAGS = -mlisa $(if $(filter lisa-cache,$(MODEL)),--tt07-cache) $(if $(filter lisa-rev2,$(MODEL)),--rev2) $(if $(filter lisa-rev2k,$(MODEL)),--pack-const)
+EXTRA_CFLAGS = -mlisa $(if $(filter lisa-cache,$(MODEL)),--tt07-cache) $(if $(filter lisa-rev2,$(MODEL)),--rev2) $(if $(filter lisa-rev2k,$(MODEL)),--pack-const) $(if $(filter lisa-rev3,$(MODEL)),--rev3)
 # lisa-rev2k: constants packed (--pack-const, ttsky26d RESPIN 26) - the
-# helpers that walk constant data take the k variants
-K = $(if $(filter lisa-rev2k,$(MODEL)),k)
+# helpers that walk constant data take the k variants; lisa-rev3 (the third
+# chip, REV3.md: 24-bit pointers, three-byte pairs) its own (*3.s)
+K = $(if $(filter lisa-rev2k,$(MODEL)),k)$(if $(filter lisa-rev3,$(MODEL)),3)
+REV3 = $(filter lisa-rev3,$(MODEL))
 
 SAS = $(top_builddir)/bin/sdaslisa
 
@@ -58,7 +60,7 @@ LISA_LONG = \
 # (the chained divide step divc, ttsky26d RESPIN 27) with the generic loops
 # renamed as its fallback for a wide divisor (divullb.c, modullb.c); TT07
 # keeps the generic routines
-REV2 = $(filter lisa-rev2 lisa-rev2k,$(MODEL))
+REV2 = $(filter lisa-rev2 lisa-rev2k lisa-rev3,$(MODEL))
 LISA_LONGLONG = $(filter-out $(if $(REV2),_divulonglong.c _modulonglong.c),$(COMMON_LONGLONG) \
   _srulonglong.c \
   _srslonglong.c \
@@ -94,8 +96,8 @@ LISAOBJECTS = $(patsubst %.c,%.rel,$(LISA_FLOAT) $(LISA_INT) $(LISA_LONG) $(LISA
 
 # memcpy (with __memcpy), memset, strcpy, strlen and strcmp are assembly: a
 # loop per space of the generic source, the pointers swapped through IX
-OBJ = setjmp.rel atomic_flag_test_and_set.rel heap.rel divu.rel divul.rel gptrget$(K).rel bf16.rel bf16add.rel bf16c.rel \
-  memcpy$(K).rel memset.rel strcpy$(K).rel strlen$(K).rel strcmp$(K).rel bcall.rel \
+OBJ = $(if $(REV3),setjmp3.rel,setjmp.rel) atomic_flag_test_and_set.rel heap.rel divu.rel divul.rel gptrget$(K).rel bf16.rel bf16add.rel bf16c.rel \
+  memcpy$(K).rel $(if $(REV3),memset3.rel,memset.rel) strcpy$(K).rel strlen$(K).rel strcmp$(K).rel $(if $(REV3),,bcall.rel) \
   $(if $(REV2),divull.rel divullb.rel modullb.rel)
 
 LIB = lisa.lib
@@ -113,8 +115,11 @@ all: $(PORTDIR)/$(LIB) $(PORTDIR)/$(LIB2)
 # (below all: make's default goal is the first rule's target)
 lisamodel.inc: Makefile
 	echo "TT07_CACHE = $(if $(filter lisa-cache,$(MODEL)),1,0)" > $@
-	echo "LISA_REV2 = $(if $(filter lisa-rev2 lisa-rev2k,$(MODEL)),1,0)" >> $@
-	echo "T = $(if $(filter lisa-rev2 lisa-rev2k,$(MODEL)),0,1)" >> $@
+	echo "LISA_REV2 = $(if $(filter lisa-rev2 lisa-rev2k lisa-rev3,$(MODEL)),1,0)" >> $@
+	echo "LISA_REV3 = $(if $(filter lisa-rev3,$(MODEL)),1,0)" >> $@
+	echo "T = $(if $(filter lisa-rev2 lisa-rev2k lisa-rev3,$(MODEL)),0,1)" >> $@
+	echo "R = $(if $(filter lisa-rev3,$(MODEL)),1,0)" >> $@
+	echo "P = $(if $(filter lisa-rev3,$(MODEL)),3,2)" >> $@
 
 $(PORTDIR)/$(LIB2): $(OBJ2) Makefile
 ifeq ($(LIB_TYPE), SDCCLIB)

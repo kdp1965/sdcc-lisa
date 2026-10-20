@@ -2474,6 +2474,10 @@ optimizeOpWidth (eBBlock ** ebbs, int count)
 
                   if (IS_PTR (nextresulttype))
                     {
+                      /* lisa: a three-byte pointer (--rev3) is added on all
+                         three bytes, so a signed index keeps its width */
+                      if (TARGET_IS_LISA && getSize (nextresulttype) > 2)
+                        continue;
                       nextresulttype = newIntLink ();
                       SPEC_USIGN (nextresulttype) = 1;
                     }

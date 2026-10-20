@@ -124,8 +124,10 @@ VAR_QUALIFIER int16_t * VAR_QUALIFIER  pi;
 #define TEST_OP_INT_PTR_DIFF(x)  DO_TEST(x, i2, ptrdiff_t)  // Same using integer for the result.
 
 // Check default address space to check the size of the default pointer size correctly
-#if defined (__SDCC_pdk13) || defined (__SDCC_pdk14) || defined (__SDCC_pdk15) || defined (__SDCC_mcs51) || defined (__SDCC_ds390)
-  #if defined (__SDCC_mcs51)
+#if defined (__SDCC_pdk13) || defined (__SDCC_pdk14) || defined (__SDCC_pdk15) || defined (__SDCC_mcs51) || defined (__SDCC_ds390) || defined (__SDCC_LISA_REV3)
+  #if defined (__SDCC_LISA_REV3)
+    #define DEFAULT_ADDR_SPACE __near // lisa --rev3: the globals of the small model are near, other pointers are 3 bytes
+  #elif defined (__SDCC_mcs51)
     #if defined (__SDCC_MODEL_SMALL) || (__SDCC_MODEL_MEDIUM)
       #define DEFAULT_ADDR_SPACE __near
     #elif defined (__SDCC_MODEL_LARGE)  || (__SDCC_MODEL_HUGE)

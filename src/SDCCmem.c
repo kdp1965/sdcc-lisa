@@ -26,6 +26,12 @@
 #include "dbuf_string.h"
 #include "SDCCbtree.h"
 
+#if !OPT_DISABLE_LISA
+extern bool lisa_rev3;          /* sdcc -mlisa --rev3 (src/lisa/main.c): 24-bit pointers */
+#else
+#define lisa_rev3 false
+#endif
+
 /* memory segments */
 memmap *xstack = NULL;          /* xternal stack data          */
 memmap *istack = NULL;          /* internal stack              */
@@ -133,7 +139,9 @@ initMem (void)
      DEBUG-NAME     -   'B'
      POINTER-TYPE   -   POINTER
    */
-  istack = allocMap (0, 0, 0, 0, 0, 0, options.stack_loc, ISTACK_NAME, 'B', POINTER);
+  /* lisa --rev3: the stack may lie anywhere in the 8 MB, so the address
+     of a stack object is a far (24-bit) pointer */
+  istack = allocMap (0, 0, 0, 0, 0, 0, options.stack_loc, ISTACK_NAME, 'B', TARGET_IS_LISA && lisa_rev3 ? FPOINTER : POINTER);
 
   /* code  segment ;
      SFRSPACE       -   NO
@@ -598,6 +606,13 @@ allocGlobal (symbol *sym)
                  goes to FDATA (or FINITIALIZED, with its initial values in
                  FINITIALIZER), behind the small ones, and is reached through IX */
               SPEC_OCLS (sym->etype) = sym->ival ? xidata : xdata;
+            }
+          else if (TARGET_IS_LISA && SPEC_ABSA (sym->etype) && SPEC_ADDR (sym->etype) + getSize (sym->type) > 0x200)
+            {
+              /* lisa: an __at object beyond the direct range is far data
+                 (through IX; on the third chip its pointers are the 24-bit
+                 far ones - it may lie beyond 64K) */
+              SPEC_OCLS (sym->etype) = x_abs;
             }
           else if (sym->ival && sym->level == 0 && port->mem.initialized_name)
             {

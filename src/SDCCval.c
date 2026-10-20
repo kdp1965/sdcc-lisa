@@ -28,10 +28,15 @@
 /* lisa: constant data in code space takes two words (four assembler bytes)
    per C byte, so a byte offset added to the address of such an object in
    an initializer is scaled by four */
+#if !OPT_DISABLE_LISA
+extern bool lisa_pack_const;    /* sdcc -mlisa --pack-const / --rev3 (src/lisa/main.c): constants packed, a byte each */
+#else
+#define lisa_pack_const false
+#endif
 static int
 lisaCodeScale (sym_link *type, int offset)
 {
-  if (!TARGET_IS_LISA)
+  if (!TARGET_IS_LISA || lisa_pack_const)
     return offset;
   if (IS_PTR (type) ? DCL_TYPE (type) == CPOINTER : SPEC_SCLS (type) == S_CODE)
     return offset * 4;

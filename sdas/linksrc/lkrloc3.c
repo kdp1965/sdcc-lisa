@@ -166,6 +166,32 @@ relt3(void)
         }
 }
 
+/* sdld lisa specific */
+/*
+ * The third chip's 24-bit pointer (ttsky26d REV3.md) for the byte
+ * address v of a symbol: a function's {1, bank, window word} with the
+ * generic-pointer tag of the older forms in bit 15 (call ix ignores it),
+ * a packed constant's {1, bank, 0x8000 | byte offset} (bank 0: the
+ * window aliases the lower 16K words, so the same form reads it), a data
+ * address as it is.  A function in the lower 16K words has bank 0, which
+ * call ix / jmp ix take as "the current bank".
+ */
+static a_uint
+lisa_ptr24(a_uint v, int iscode, int iskdata)
+{
+	a_uint bank, w;
+
+	bank = (v >> 15) & 0x7F;
+	if (iskdata)
+		return 0x800000 | (bank << 16) | 0x8000 | (v & 0x7FFF);
+	if (iscode) {
+		w = (v >> 1) & 0x3FFF;
+		return 0x800000 | (bank << 16) | 0x8000 | (bank ? 0x4000 : 0) | w;
+	}
+	return v & 0x7FFFFF;
+}
+/* end sdld lisa specific */
+
 /*)Function     VOID    relr3()
  *
  *      The function relr3() evaluates a R line read by
@@ -409,8 +435,8 @@ relr3(void)
                  */
                 if (TARGET_IS_LISA) {
                         struct area *bap;
-                        a_uint f, v, op, w, bank;
-                        int n, k, iscode, iscdata, iskdata, is24;
+                        a_uint f, v, op, w;
+                        int n, k, iscode, iscdata, iskdata, is24, isb3;
 
                         if (mode & R3_SYM)
                                 bap = s[rindex]->s_axp ? s[rindex]->s_axp->a_bap : NULL;
@@ -427,11 +453,18 @@ relr3(void)
                          * packed constant's {1, bank, byte offset in the
                          * bank}, a data address as it is */
                         is24 = !(mode & R3_BYTE) && (mode & R3_PAG0) && (mode & R3_MSB);
+                        /* R3_PAG0 on a byte: (sym >> 16), the third byte
+                         * of that pointer (sdas lisa turns R_HIB into it) */
+                        isb3 = (mode & R3_BYTE) && (mode & R3_PAG0);
                         n = is24 ? 3 : (mode & R3_BYTE) ? ((mode & R3_BYTX) ? a_bytes : 1) : 2;
                         for (f = 0, k = n; k-- > 0; )
                                 f = (f << 8) | rtval[rtp + k];
 
-                        if (!(mode & R3_BYTE) && (mode & R3_PAG)) {
+                        if (isb3) {
+                                v = lisa_ptr24(reli + f, iscode, iskdata);
+                                v = (v >> 16) & 0xFF;
+                                mode &= ~(R3_PAG0 | R3_MSB);
+                        } else if (!(mode & R3_BYTE) && (mode & R3_PAG)) {
                                 op = f & ~(a_uint) 0x3FF;
                                 v = reli + (f & 0x3FF);
                                 if (iscode)
@@ -441,15 +474,7 @@ relr3(void)
                                 v = op | (v & 0x3FF);
                                 mode &= ~R3_PAG;
                         } else if (is24) {
-                                v = reli + f;
-                                bank = (v >> 15) & 0x7F;
-                                if (iskdata)
-                                        v = 0x800000 | (bank << 16) | (bank ? 0x8000 : 0) | (v & 0x7FFF);
-                                else if (iscode) {
-                                        w = (v >> 1) & 0x3FFF;
-                                        v = 0x800000 | (bank << 16) | (bank ? 0x4000 : 0) | w;
-                                } else
-                                        v &= 0x7FFFFF;
+                                v = lisa_ptr24(reli + f, iscode, iskdata);
                                 mode &= ~(R3_PAG0 | R3_MSB);
                         } else {
                                 v = reli + f;
