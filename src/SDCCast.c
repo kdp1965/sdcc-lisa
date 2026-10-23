@@ -7622,8 +7622,11 @@ findStaticInlineCode (const symbol *sym)
 {
   staticInlineCode *sic;
 
+  /* by name too: a call through an earlier declaration (static int f ();
+     ... f () ...; static inline int f () { }) refers to the declaration's
+     symbol, not the definition's */
   for (sic = setFirstItem (staticInlineCodes); sic; sic = setNextItem (staticInlineCodes))
-    if (sic->sym == sym)
+    if (sic->sym == sym || (sym->level == 0 && !strcmp (sic->sym->name, sym->name)))
       return sic;
   return NULL;
 }

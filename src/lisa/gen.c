@@ -5963,7 +5963,40 @@ branchTarget (const lineNode *pl, const char **mnemonic_end)
   return t + 1;
 }
 
-struct labelAddr { const char *name; long addr; };
+struct labelAddr { const char *name; long addr; lineNode *node; };
+
+/* The function's tail at a label as one multi-line string, when it is a
+   short run of instructions ending in ret / rets / reti (the epilogue):
+   an out-of-range br to it becomes a copy of it rather than ldx / jmp ix,
+   which would destroy IX - the return value of an int, pointer or long
+   function (an early `return OK;` came back as the epilogue's address). */
+static char *
+epilogueCopy (const lineNode *label)
+{
+  struct dbuf_s dbuf;
+  const lineNode *pl;
+  int n = 0;
+
+  if (!label)
+    return NULL;
+  dbuf_init (&dbuf, 64);
+  for (pl = label->next; pl; pl = pl->next)
+    {
+      if (pl->isComment || pl->isDebug || !pl->line)
+        continue;
+      if (pl->isLabel || pl->isInline || strchr (pl->line, '\n') || ++n > 8 ||
+          !strncmp (pl->line, "br", 2) || !strncmp (pl->line, "bz", 2) || !strncmp (pl->line, "bnz", 3) ||
+          !strncmp (pl->line, "jmp", 3) || !strncmp (pl->line, "jal", 3) || !strncmp (pl->line, "ldx", 3) && strncmp (pl->line, "ldxx", 4))
+        break;
+      if (dbuf_get_length (&dbuf))
+        dbuf_append_str (&dbuf, "\n\t");
+      dbuf_append_str (&dbuf, pl->line);
+      if (!strncmp (pl->line, "ret", 3) && (!pl->line[3] || pl->line[3] == 's' || pl->line[3] == 'i' || isspace ((unsigned char) pl->line[3])))
+        return dbuf_detach_c_str (&dbuf);
+    }
+  dbuf_destroy (&dbuf);
+  return NULL;
+}
 
 static void
 relaxBranches (lineNode *head)
@@ -5996,6 +6029,7 @@ relaxBranches (lineNode *head)
                 }
               labels[nlabels].name = lbl;
               labels[nlabels].addr = addr;
+              labels[nlabels].node = pl;
               nlabels++;
             }
           addr += lineWords (pl);
@@ -6009,10 +6043,12 @@ relaxBranches (lineNode *head)
           if (target)
             {
               long taddr = -1;
+              lineNode *tnode = NULL;
               for (int i = 0; i < nlabels; i++)
                 if (!strcmp (labels[i].name, target))
                   {
                     taddr = labels[i].addr;
+                    tnode = labels[i].node;
                     break;
                   }
               if (taddr >= 0)
@@ -6029,7 +6065,13 @@ relaxBranches (lineNode *head)
                       memcpy (mn, pl->line, ml);
                       mn[ml] = 0;
                       dbuf_init (&dbuf, 128);
-                      if (!strcmp (mn, "br"))
+                      char *tail;
+                      if (!strcmp (mn, "br") && (tail = epilogueCopy (tnode)))
+                        {
+                          dbuf_append_str (&dbuf, tail);
+                          Safe_free (tail);
+                        }
+                      else if (!strcmp (mn, "br"))
                         dbuf_printf (&dbuf, "ldx\t#%s\n\tjmp\tix", target);
                       else if (!strcmp (mn, "bz"))
                         dbuf_printf (&dbuf, "bnz\t%05d$\n\tldx\t#%s\n\tjmp\tix\n%05d$:", labelKey2num (skip->key), target, labelKey2num (skip->key));
