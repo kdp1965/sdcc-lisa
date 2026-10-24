@@ -96,6 +96,70 @@ __sfr __at(0x20f) INT_STATUS;
 #define LISA_INT_TTLC     6
 #define LISA_INT_I2C      7
 #define LISA_INT_SPURIOUS 9
+#define LISA_INT_TIMER3   9    /* the third chip's Timer 3 (ttsky26d RESPIN 32): source 8, vector 9 */
+
+/* ---- Timer 3 (the third chip, RESPIN 32) -------------------------------
+   A 16-bit counter 0..TOP with a prescaler (a tick every PRE + 1 clocks),
+   two compares driving PWM0 / PWM1 (uo[1] / uo[2] in mux 2, while
+   T3_CTRL enables them) and two input captures (ui_in[4] / ui_in[5]).
+   Reading T3_CNT_L latches T3_CNT_H; a T3_CNT_L write loads the count with
+   the T3_CNT_H written before.  Any event enabled in T3_IE is interrupt
+   source 8, vector 9: __interrupt (LISA_INT_TIMER3). */
+__sfr __at(0x230) T3_PRE;
+__sfr __at(0x231) T3_TOP_L;
+__sfr __at(0x232) T3_TOP_H;
+__sfr __at(0x233) T3_CNT_L;
+__sfr __at(0x234) T3_CNT_H;
+__sfr __at(0x235) T3_CMP0_L;
+__sfr __at(0x236) T3_CMP0_H;
+__sfr __at(0x237) T3_CMP1_L;
+__sfr __at(0x238) T3_CMP1_H;
+__sfr __at(0x239) T3_CAP0_L;
+__sfr __at(0x23A) T3_CAP0_H;
+__sfr __at(0x23B) T3_CAP1_L;
+__sfr __at(0x23C) T3_CAP1_H;
+__sfr __at(0x23D) T3_CTRL;
+__sfr __at(0x23E) T3_IE;
+__sfr __at(0x23F) T3_STATUS;
+
+#define T3_CTRL_EN        0x01
+#define T3_CTRL_PWM0      0x02
+#define T3_CTRL_PWM1      0x04
+#define T3_CTRL_CAP0_RISE 0x10
+#define T3_CTRL_CAP0_FALL 0x20
+#define T3_CTRL_CAP1_RISE 0x40
+#define T3_CTRL_CAP1_FALL 0x80
+#define T3_OVF            0x01   /* T3_IE / T3_STATUS bits */
+#define T3_CMP0           0x02
+#define T3_CMP1           0x04
+#define T3_CAP0           0x08
+#define T3_CAP1           0x10
+
+/* ---- WS2812B driver (the third chip, RESPIN 33) ------------------------
+   The pixels are the TTLC's 48 output flops, written through the TTLC I/O
+   window (TIDX 0x22C / TDATA 0x22D): half A bytes 0-2, half B bytes 3-5,
+   each G, R, B.  Set WS_EN and a pin (uo[0], [1], [2], [5], [6] in mux 3),
+   load a half, write its FULL bit to WS_STAT, and keep filling A, B, A ...
+   from DONE on; WS_IE makes a free half the TTLC's interrupt source
+   (__interrupt (LISA_INT_TTLC)).  Keep WS_EN set while strings are
+   attached: off, the pins are the TTLC's again.  The MC14500B must be
+   halted (its reset state). */
+__sfr __at(0x240) WS_CTRL;
+__sfr __at(0x241) WS_STAT;
+__sfr __at(0x242) WS_T0H;
+__sfr __at(0x243) WS_T1H;
+__sfr __at(0x244) WS_TBIT;
+__sfr __at(0x245) WS_TRST;
+
+#define WS_EN             0x01
+#define WS_PIN(n)         ((n) << 1)   /* 0 uo[0], 1 uo[1], 2 uo[2], 3 uo[5], 4 uo[6] */
+#define WS_IE             0x10
+#define WS_FULL_A         0x01   /* WS_STAT */
+#define WS_FULL_B         0x02
+#define WS_BUSY           0x04
+#define WS_DONE           0x08
+#define WS_UNDERRUN       0x10
+#define WS_NEXT           0x20
 
 #define lisa_ei()  __asm__ ("eidi\t1")
 #define lisa_di()  __asm__ ("eidi\t0")
