@@ -2820,8 +2820,13 @@ optimizeCastCast (eBBlock **ebbs, int count)
                      getAddrspace (type1) == getAddrspace (type3) && sclsFromPtr (type1) == sclsFromPtr (type3) &&
                     (ic->op == CAST || ic->op == '+' && IS_OP_LITERAL (ic->right) && IS_OP_LITERAL (uic->right)))
                     {
-                      if (ic->next == uic && isOperandEqual (ic->result, uic->left)) // Eliminate ic competely.
+                      if (ic->next == uic && isOperandEqual (ic->result, uic->left) &&
+                          IS_SYMOP (ic->op == CAST ? ic->right : ic->left)) // Eliminate ic competely.
                         {
+                          /* (the operand taking ic's place must be a symbol:
+                             a literal - a constant address cast to a pointer
+                             and indexed - has no uses to record, and
+                             OP_USES on it failed validateOpType) */
                           bitVectUnSetBit (OP_USES (uic->left), uic->key);
                           uic->left = ic->op == CAST ? ic->right : ic->left;
                           bitVectSetBit (OP_USES (uic->left), uic->key);

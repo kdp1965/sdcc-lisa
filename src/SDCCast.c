@@ -5140,8 +5140,10 @@ decorateType (ast *tree, RESULT_TYPE resultType, bool reduceTypeAllowed)
           if (!((IS_PTR (LTYPE (tree)) && IS_LITERAL (RTYPE (tree)))
                 || (IS_PTR (RTYPE (tree)) && IS_LITERAL (LTYPE (tree)))
                 || ((tree->opval.op == EQ_OP || tree->opval.op == NE_OP)
-                    && ((IS_FUNC (LTYPE (tree)) && IS_LITERAL (RTYPE (tree)) && !ullFromVal (valFromType (RTYPE (tree))))
-                        || (IS_FUNC (RTYPE (tree)) && IS_LITERAL (LTYPE (tree)) && !ullFromVal (valFromType (LTYPE (tree))))))))
+                    /* a function or an array (which decays to a pointer)
+                       against a null pointer constant written as 0 */
+                    && (((IS_FUNC (LTYPE (tree)) || IS_ARRAY (LTYPE (tree))) && IS_LITERAL (RTYPE (tree)) && !ullFromVal (valFromType (RTYPE (tree))))
+                        || ((IS_FUNC (RTYPE (tree)) || IS_ARRAY (RTYPE (tree))) && IS_LITERAL (LTYPE (tree)) && !ullFromVal (valFromType (LTYPE (tree))))))))
 
             if (compareType (LTYPE (tree), RTYPE (tree), false) == 0)
               {
@@ -5152,8 +5154,8 @@ decorateType (ast *tree, RESULT_TYPE resultType, bool reduceTypeAllowed)
                     tree->right = s;
                     if (tree->opval.op == '>')
                       tree->opval.op = '<';
-                    else if (tree->opval.op == '>')
-                      tree->opval.op = '<';
+                    else if (tree->opval.op == '<')    /* (was '>' twice: a < b swapped stayed '<') */
+                      tree->opval.op = '>';
                     else if (tree->opval.op == LE_OP)
                       tree->opval.op = GE_OP;
                     else if (tree->opval.op == GE_OP)
