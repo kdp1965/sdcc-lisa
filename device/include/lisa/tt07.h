@@ -161,6 +161,18 @@ __sfr __at(0x245) WS_TRST;
 #define WS_UNDERRUN       0x10
 #define WS_NEXT           0x20
 
+/* DMA (RESPIN 35): frames straight from the PSRAM.  Put the buffer (G, R, B
+   a pixel) on a 256-byte boundary, BASE = its address / 256 into the TTLC
+   output bytes 0-1 and LEN (pixels, up to 8191) into bytes 2-3 (TIDX = 0,
+   four TDATA writes), set WS_EN | WS_DMA and a pin, write WS_START: the
+   data cache is flushed, the frame sent, WS_FRAME set at its end (and the
+   request with WS_IE); WS_ACTIVE until then, or on with WS_REPEAT. */
+#define WS_DMA            0x20   /* WS_CTRL */
+#define WS_REPEAT         0x40
+#define WS_ACTIVE         0x40   /* WS_STAT: a frame running */
+#define WS_START          0x40   /* WS_STAT written: a frame */
+#define WS_FRAME          0x80   /* WS_STAT: a frame ended, write 1 to clear */
+
 #define lisa_ei()  __asm__ ("eidi\t1")
 #define lisa_di()  __asm__ ("eidi\t0")
 
