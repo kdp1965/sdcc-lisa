@@ -173,15 +173,17 @@ __sfr __at(0x245) WS_TRST;
 #define WS_START          0x40   /* WS_STAT written: a frame */
 #define WS_FRAME          0x80   /* WS_STAT: a frame ended, write 1 to clear */
 
-/* ---- Cycle counter, watchdog, PDM outputs (the third chip, RESPIN 36) ---
+/* ---- Cycle counter and watchdog (the third chip, RESPIN 36) ------------
    CYC0..CYC3: a 32-bit count of clocks; reading CYC0 latches CYC1..CYC3, a
    write to CYC0 clears it.  The watchdog: set WDT_TIMEOUT and WDT_CTRL =
    WDT_EN | WDT_SCALE(n), then write WDT_KICK_KEY to WDT_KICK within
    (TIMEOUT + 1) x 2^(16 + n) clocks, or it resets the core and the
    peripherals (the program restarts at 0; WDT_EN is then clear and
-   WDT_WDRST set - a 1 written clears it).  PDM: two sigma-delta outputs,
-   VAL / 256 density, on Timer 3's PWM pins (uo[1] / uo[2], mux 2); an RC
-   filter makes each an 8-bit DAC. */
+   WDT_WDRST set - a 1 written clears it).  The PDM outputs are Timer 3's
+   channels in PDM mode: T3_IE_PDM0 / T3_IE_PDM1 in T3_IE make the channel
+   a sigma-delta output of CMPn's low byte / 256 (on its PWM pin, with
+   T3_CTRL's PWM out bit) instead of an input capture; an RC filter makes
+   it an 8-bit DAC. */
 __sfr __at(0x248) CYC0;
 __sfr __at(0x249) CYC1;
 __sfr __at(0x24A) CYC2;
@@ -190,16 +192,13 @@ __sfr __at(0x24C) WDT_CTRL;
 __sfr __at(0x24D) WDT_KICK;
 __sfr __at(0x24E) WDT_TIMEOUT;
 __sfr __at(0x24F) WDT_STAT;
-__sfr __at(0x250) PDM_CTRL;
-__sfr __at(0x251) PDM_VAL0;
-__sfr __at(0x252) PDM_VAL1;
 
 #define WDT_EN            0x01   /* WDT_CTRL */
 #define WDT_SCALE(n)      ((n) << 1)
 #define WDT_KICK_KEY      0xA5
 #define WDT_WDRST         0x01   /* WDT_STAT */
-#define PDM_CH0           0x01   /* PDM_CTRL */
-#define PDM_CH1           0x02
+#define T3_IE_PDM0        0x20   /* T3_IE: channel 0 a PDM output (no CAP0) */
+#define T3_IE_PDM1        0x40   /* T3_IE: channel 1 a PDM output (no CAP1) */
 
 #define lisa_ei()  __asm__ ("eidi\t1")
 #define lisa_di()  __asm__ ("eidi\t0")
