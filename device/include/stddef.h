@@ -36,8 +36,8 @@
 
 #ifndef __PTRDIFF_T_DEFINED
 #define __PTRDIFF_T_DEFINED
-#if defined (__SDCC_mcs51) || defined (__SDCC_ds390)
-  typedef long int ptrdiff_t;
+#if defined (__SDCC_mcs51) || defined (__SDCC_ds390) || defined (__SDCC_LISA_REV3)
+  typedef long int ptrdiff_t;   /* lisa --rev3: the compiler's pointer difference is a long (24-bit pointers) */
 #else
   typedef int ptrdiff_t; // 16 bit ptrdiff_t is in violation of the ISO C99, C11, C17 standards, but complies with C90 and C23.
 #endif

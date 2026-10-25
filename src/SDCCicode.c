@@ -2378,7 +2378,11 @@ geniCodePtrPtrSubtract (operand * left, operand * right)
 
   ic = newiCode ('-', left, right);
 
-  IC_RESULT (ic) = result = newiTempOperand (newIntLink (), 1);
+  /* the AST's type of the difference (newPtrDiffLink: a long where a
+     generic pointer is wider than an int - LISA --rev3's 24-bit ones);
+     an int here, unconverted as a variadic argument, was pushed as two
+     bytes while the call counted four */
+  IC_RESULT (ic) = result = newiTempOperand (newPtrDiffLink (), 1);
   ADDTOCHAIN (ic);
 
 subtractExit:

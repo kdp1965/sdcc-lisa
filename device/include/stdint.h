@@ -224,7 +224,7 @@ typedef unsigned long long int  uintmax_t;
 /* Limits of other integer types.  */
 
 /* Limits of `ptrdiff_t' type.  */
-#if defined (__SDCC_mcs51) || defined (__SDCC_ds390)
+#if defined (__SDCC_mcs51) || defined (__SDCC_ds390) || defined (__SDCC_LISA_REV3)
 #define PTRDIFF_MIN           (-2147483647L-1)
 #define PTRDIFF_MAX           (2147483647L)
 #else
